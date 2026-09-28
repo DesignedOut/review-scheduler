@@ -208,7 +208,7 @@
   <div class="row">
     <div class="field">
       <label>Teams (comma-separated)</label>
-      <input type="text" id="teamsInput" value="1,2,3,4,5,6,7,8,9,10,11">
+      <input type="text" id="teamsInput" value="1,2,3,4,5,6,7,8">
     </div>
     <div class="field">
       <label>Coupling / ordering criterion</label>
@@ -220,16 +220,31 @@
       </select>
     </div>
   </div>
-  <div class="hint" style="margin-bottom:8px">Fairness score (0 = usually scheduled early in past weeks, 1 = usually late) nudges today's order so teams' time slots vary week to week. Leave at 0.5 if unknown.</div>
+  <div class="hint" style="margin-bottom:8px">Topic is a standing attribute per team (set it once below — it's reused every time). "Priority this time" is a direct override: a team set to prefer early/late will reliably get that end of the schedule, regardless of criterion. "History (avg position)" is computed automatically from imported past schedules below and gives a gentle nudge only — it never overrides priority.</div>
   <div id="teamTableWrap"></div>
+  <div class="row" style="margin-top:14px; align-items:center">
+    <div class="field">
+      <label>Import team roster (.json)</label>
+      <input type="file" id="rosterFile" accept=".json" onchange="importRoster(this.files[0])">
+    </div>
+    <div class="field">
+      <button onclick="exportRoster()">Export team roster (.json)</button>
+    </div>
+  </div>
 </div>
 
 <div class="card">
-  <h2>Pairing history</h2>
-  <div class="hint" style="margin-bottom:8px">When a slot groups teams together (capacity 2+), the tool avoids repeating combinations that happened before, using this history. Import last week's file, generate, then export the updated file for next week.</div>
+  <h2>History (pairings &amp; fairness)</h2>
+  <div class="hint" style="margin-bottom:8px">Upload the Excel file(s) you already keep with past schedules (any sheet with a "Start time" column and "TEAM n" mentions is read automatically) — no need to retype anything. This builds both the repeat-pairing check and the "History (avg position)" column above. You can upload several files, or several sheets in one file, at once.</div>
   <div class="row" style="align-items:center">
     <div class="field">
-      <label>Import history file (.json)</label>
+      <label>Import past schedule(s) (.xlsx)</label>
+      <input type="file" id="excelHistoryFile" accept=".xlsx,.xls" multiple onchange="importScheduleExcel(this.files)">
+    </div>
+  </div>
+  <div class="row" style="align-items:center">
+    <div class="field">
+      <label>Or import a previously exported history file (.json)</label>
       <input type="file" id="historyFile" accept=".json" onchange="importHistory(this.files[0])">
     </div>
     <div class="field">
@@ -239,7 +254,7 @@
       <button onclick="resetHistory()">Clear history</button>
     </div>
   </div>
-  <div class="hint" id="historyStatus">No pairing history loaded yet — every combination will be treated as new.</div>
+  <div class="hint" id="historyStatus">No history loaded yet — every combination will be treated as new, and no fairness data is available.</div>
 </div>
 
 <div class="actions">
@@ -261,18 +276,49 @@ let lastSchedule = null;
 let lastConfig = null;
 let trackIdSeq = 0;
 let pairHistory = {};
+let fairnessEntries = [];
+let fairnessScores = {};
+let teamRoster = {};
 
 function pairKey(a, b) {
   return [String(a), String(b)].sort().join('|');
 }
 
-function updateHistoryStatus() {
-  const n = Object.keys(pairHistory).length;
+function recomputeFairness() {
+  const bySheetTimes = {};
+  fairnessEntries.forEach(h => {
+    (bySheetTimes[h.sheet] = bySheetTimes[h.sheet] || new Set()).add(h.start);
+  });
+  const sheetRank = {};
+  Object.entries(bySheetTimes).forEach(([sheet, set]) => {
+    const times = [...set].sort();
+    const n = times.length;
+    const rankMap = {};
+    times.forEach((t, i) => rankMap[t] = n > 1 ? i / (n - 1) : 0.5);
+    sheetRank[sheet] = rankMap;
+  });
+  const teamScores = {};
+  fairnessEntries.forEach(h => {
+    const r = sheetRank[h.sheet] ? sheetRank[h.sheet][h.start] : undefined;
+    if (r === undefined) return;
+    (teamScores[h.team] = teamScores[h.team] || []).push(r);
+  });
+  fairnessScores = {};
+  Object.entries(teamScores).forEach(([t, arr]) => {
+    fairnessScores[t] = arr.reduce((a, b) => a + b, 0) / arr.length;
+  });
+}
+
+function updateHistoryStatus(extra) {
+  const nPairs = Object.keys(pairHistory).length;
+  const nFair = Object.keys(fairnessScores).length;
   const el = document.getElementById('historyStatus');
   if (!el) return;
-  el.textContent = n
-    ? `Tracking ${n} past team combination(s).`
-    : 'No pairing history loaded yet — every combination will be treated as new.';
+  const parts = [];
+  parts.push(nPairs ? `Tracking ${nPairs} past team combination(s).` : 'No pairing combinations tracked yet.');
+  parts.push(nFair ? `Fairness data available for ${nFair} team(s).` : 'No fairness data yet.');
+  if (extra) parts.push(extra);
+  el.textContent = parts.join(' ');
 }
 
 function importHistory(file) {
@@ -281,28 +327,114 @@ function importHistory(file) {
   reader.onload = e => {
     try {
       const data = JSON.parse(e.target.result);
-      Object.entries(data).forEach(([k, v]) => {
+      const pairs = data.pairHistory || data;
+      Object.entries(pairs).forEach(([k, v]) => {
         pairHistory[k] = (pairHistory[k] || 0) + (parseInt(v) || 0);
       });
+      if (Array.isArray(data.fairnessEntries)) {
+        fairnessEntries = fairnessEntries.concat(data.fairnessEntries);
+        recomputeFairness();
+      }
       updateHistoryStatus();
+      renderTeamTable();
     } catch (err) {
-      alert('Could not read that file as pairing history JSON.');
+      alert('Could not read that file as a history JSON export.');
     }
   };
   reader.readAsText(file);
 }
 
 function exportHistory() {
-  const blob = new Blob([JSON.stringify(pairHistory, null, 2)], { type: 'application/json' });
+  const blob = new Blob([JSON.stringify({ pairHistory, fairnessEntries }, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = 'pairing_history.json';
+  a.download = 'schedule_history.json';
   a.click();
 }
 
 function resetHistory() {
   pairHistory = {};
+  fairnessEntries = [];
+  fairnessScores = {};
   updateHistoryStatus();
+  renderTeamTable();
+}
+
+function parseWorkbookForHistory(workbook) {
+  const history = [];
+  const pairDelta = {};
+  const teamRe = /TEAM\s*(\d+)/gi;
+  workbook.SheetNames.forEach(sheetName => {
+    const ws = workbook.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: null });
+    let headerIdx = -1, startCol = -1, endCol = -1;
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      if (!r) continue;
+      const idx = r.findIndex(c => typeof c === 'string' && c.trim().toLowerCase() === 'start time');
+      if (idx !== -1) { headerIdx = i; startCol = idx; break; }
+    }
+    if (headerIdx === -1) return;
+    const header = rows[headerIdx];
+    endCol = header.findIndex(c => typeof c === 'string' && c.trim().toLowerCase() === 'end time');
+    const teamCols = [];
+    header.forEach((c, i) => { if (i !== startCol && i !== endCol && c != null && c !== '') teamCols.push(i); });
+
+    for (let r = headerIdx + 1; r < rows.length; r++) {
+      const row = rows[r];
+      if (!row) continue;
+      const stRaw = row[startCol];
+      if (stRaw == null) continue;
+      const st = String(stRaw).trim();
+      if (!/^\d{1,2}:\d{2}/.test(st)) continue;
+      const uniqueSheetKey = sheetName + '::' + startCol;
+      teamCols.forEach(ci => {
+        const val = row[ci];
+        if (val == null || typeof val !== 'string') return;
+        const matches = [...val.matchAll(teamRe)].map(m => parseInt(m[1], 10));
+        if (!matches.length) return;
+        matches.forEach(team => history.push({ team, sheet: uniqueSheetKey, start: st }));
+        for (let a = 0; a < matches.length; a++) {
+          for (let b = a + 1; b < matches.length; b++) {
+            const k = pairKey(matches[a], matches[b]);
+            pairDelta[k] = (pairDelta[k] || 0) + 1;
+          }
+        }
+      });
+    }
+  });
+  return { history, pairDelta };
+}
+
+function importScheduleExcel(fileList) {
+  if (!fileList || !fileList.length) return;
+  let remaining = fileList.length;
+  let totalNewHistory = 0, totalNewPairs = 0;
+  Array.from(fileList).forEach(file => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      try {
+        const data = new Uint8Array(e.target.result);
+        const workbook = XLSX.read(data, { type: 'array' });
+        const { history, pairDelta } = parseWorkbookForHistory(workbook);
+        fairnessEntries = fairnessEntries.concat(history);
+        totalNewHistory += history.length;
+        Object.entries(pairDelta).forEach(([k, v]) => {
+          pairHistory[k] = (pairHistory[k] || 0) + v;
+          totalNewPairs++;
+        });
+      } catch (err) {
+        alert(`Could not read "${file.name}" as an Excel file with a "Start time" column.`);
+      }
+      remaining--;
+      if (remaining === 0) {
+        recomputeFairness();
+        updateHistoryStatus(`Just imported ${totalNewHistory} appointment record(s) from ${fileList.length} file(s).`);
+        renderTeamTable();
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  });
 }
 
 function saveToHistory() {
@@ -314,7 +446,11 @@ function saveToHistory() {
   lastSchedule.forEach(row => {
     trackNames.forEach(prof => {
       const item = row.cells[prof];
-      if (item && item.length > 1) {
+      if (!item) return;
+      item.forEach(t => {
+        fairnessEntries.push({ team: t, sheet: `${lastConfig.date}::${prof}`, start: row.start });
+      });
+      if (item.length > 1) {
         for (let i = 0; i < item.length; i++) {
           for (let j = i + 1; j < item.length; j++) {
             const k = pairKey(item[i], item[j]);
@@ -324,8 +460,32 @@ function saveToHistory() {
       }
     });
   });
-  updateHistoryStatus();
-  document.getElementById('historyStatus').textContent += ' Saved this schedule\'s groupings.';
+  recomputeFairness();
+  updateHistoryStatus('Saved this schedule to history.');
+  renderTeamTable();
+}
+
+function importRoster(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const data = JSON.parse(e.target.result);
+      Object.entries(data).forEach(([k, v]) => { teamRoster[k] = v; });
+      renderTeamTable();
+    } catch (err) {
+      alert('Could not read that file as a team roster JSON.');
+    }
+  };
+  reader.readAsText(file);
+}
+
+function exportRoster() {
+  const blob = new Blob([JSON.stringify(teamRoster, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'team_roster.json';
+  a.click();
 }
 
 function addTrack() {
@@ -385,26 +545,38 @@ function renderTeamTable() {
   const teams = getTeams();
   const criterion = document.getElementById('criterion').value;
   const wrap = document.getElementById('teamTableWrap');
-  const valueLabel = criterion === 'topic' ? 'Topic' :
-                      criterion === 'criticality' ? 'Risk score (higher = more critical)' :
-                      criterion === 'opposite_grades' ? 'Grade' : null;
+  const needsCritValue = criterion === 'criticality' || criterion === 'opposite_grades';
+  const critLabel = criterion === 'criticality' ? 'Risk score (higher = more critical)' : 'Grade';
 
-  let html = '<table class="team-table"><thead><tr><th>Team</th>';
-  if (valueLabel) html += `<th>${valueLabel}</th>`;
-  html += '<th>Fairness (0-1)</th></tr></thead><tbody>';
+  let html = '<table class="team-table"><thead><tr><th>Team</th><th>Topic</th>';
+  if (needsCritValue) html += `<th>${critLabel}</th>`;
+  html += '<th>Priority this time</th><th>History (avg position)</th></tr></thead><tbody>';
   teams.forEach(t => {
-    html += `<tr><td>${t}</td>`;
-    if (valueLabel) {
-      const inputType = criterion === 'topic' ? 'text' : 'number';
-      html += `<td><input type="${inputType}" id="crit_${t}" placeholder="${criterion === 'topic' ? 'e.g. lighting' : '0'}"></td>`;
+    const key = JSON.stringify(t);
+    const topicVal = (teamRoster[t] && teamRoster[t].topic) || '';
+    const fair = fairnessScores[t];
+    let fairText = 'no history';
+    if (fair !== undefined) {
+      const tag = fair < 0.4 ? 'usually early' : fair > 0.6 ? 'usually late' : 'mixed';
+      fairText = `${fair.toFixed(2)} (${tag})`;
     }
-    html += `<td><input type="number" id="fair_${t}" min="0" max="1" step="0.1" value="0.5"></td></tr>`;
+    html += `<tr><td>${t}</td>`;
+    html += `<td><input type="text" id="topic_${t}" value="${topicVal}" placeholder="e.g. lighting" oninput="teamRoster[${key}]={topic:this.value}"></td>`;
+    if (needsCritValue) {
+      html += `<td><input type="number" id="crit_${t}"></td>`;
+    }
+    html += `<td><select id="prio_${t}">
+        <option value="">No preference</option>
+        <option value="early">Prefer early</option>
+        <option value="late">Prefer late</option>
+      </select></td>`;
+    html += `<td>${fairText}</td></tr>`;
   });
   html += '</tbody></table>';
   wrap.innerHTML = html;
 }
 
-function orderTeams(teams, criterion, critData, fairData) {
+function orderTeams(teams, criterion, critData, fairData, priorityData) {
   let arr = teams.slice();
   if (criterion === 'random') {
     for (let i = arr.length - 1; i > 0; i--) {
@@ -425,6 +597,7 @@ function orderTeams(teams, criterion, critData, fairData) {
     }
     arr = interleaved;
   }
+
   const orderIndex = {};
   arr.forEach((t, i) => orderIndex[t] = i);
   const bucketSize = Math.max(1, Math.floor(arr.length / 4));
@@ -434,7 +607,12 @@ function orderTeams(teams, criterion, critData, fairData) {
     if (ba !== bb) return ba - bb;
     return (fairData[b] || 0.5) - (fairData[a] || 0.5);
   });
-  return arr;
+
+  const pd = priorityData || {};
+  const early = arr.filter(t => pd[t] === 'early');
+  const late = arr.filter(t => pd[t] === 'late');
+  const normal = arr.filter(t => pd[t] !== 'early' && pd[t] !== 'late');
+  return [...early, ...normal, ...late];
 }
 
 function timeToMin(t) {
@@ -489,7 +667,7 @@ function buildTrackUnits(track, teamCount) {
 }
 
 function buildSchedule(config) {
-  const { teams, tracks, criterion, critData, fairData } = config;
+  const { teams, tracks, criterion, critData, fairData, priorityData } = config;
   const T = teams.length;
 
   const trackUnits = {};
@@ -499,7 +677,17 @@ function buildSchedule(config) {
     trackUnits[tr.name] = res.units;
   }
 
-  const baseOrder = orderTeams(teams, criterion, critData, fairData);
+  const baseOrder = orderTeams(teams, criterion, critData, fairData, priorityData);
+
+  // Priority is a hard guarantee, not a nudge: split the ordered sequence into its
+  // early / normal / late partitions (orderTeams already put them in that order) and
+  // only ever rotate the "normal" middle for pairing-diversity search. This keeps
+  // early/late-priority teams pinned to the first/last units of every track on every
+  // attempt, instead of a soft preference that could get shuffled away.
+  const pd = priorityData || {};
+  const earlyPart = baseOrder.filter(t => pd[t] === 'early');
+  const latePart = baseOrder.filter(t => pd[t] === 'late');
+  const normalPart = baseOrder.filter(t => pd[t] !== 'early' && pd[t] !== 'late');
 
   let userGap = config.minGap;
   const defaultGap = Math.max(...tracks.map(t => t.duration));
@@ -520,14 +708,26 @@ function buildSchedule(config) {
     return penalty;
   }
 
+  // Rotate each partition independently, and independently per track, so tracks with
+  // overlapping start times can still resolve conflicts against each other — while
+  // teams in earlyPart/latePart always land in the first/last seats of every track's
+  // own sequence (their guarantee never moves, only who else shares their partition).
+  function trackSequence(attempt) {
+    const rotPart = (part) => {
+      if (!part.length) return [];
+      if (attempt === 0) return part.slice();
+      return rotate(part, Math.floor(Math.random() * part.length));
+    };
+    return [...rotPart(earlyPart), ...rotPart(normalPart), ...rotPart(latePart)];
+  }
+
   const maxAttempts = 400;
   let best = null;
   let bestPenalty = Infinity;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const perTrackGroups = {};
     for (const tr of tracks) {
-      const offset = attempt === 0 ? 0 : Math.floor(Math.random() * T);
-      const seq = rotate(baseOrder, offset);
+      const seq = trackSequence(attempt);
       const units = trackUnits[tr.name];
       const groups = [];
       let ptr = 0;
@@ -644,22 +844,24 @@ function collectConfig() {
   const teams = getTeams();
   const criterion = document.getElementById('criterion').value;
   const critData = {};
-  const fairData = {};
+  const priorityData = {};
   teams.forEach(t => {
-    const critEl = document.getElementById('crit_' + t);
-    if (critEl) {
-      const v = critEl.value;
-      critData[t] = criterion === 'topic' ? v : parseFloat(v) || 0;
+    if (criterion === 'topic') {
+      critData[t] = (teamRoster[t] && teamRoster[t].topic) || '';
+    } else if (criterion === 'criticality' || criterion === 'opposite_grades') {
+      const critEl = document.getElementById('crit_' + t);
+      critData[t] = critEl ? (parseFloat(critEl.value) || 0) : 0;
     }
-    const fairEl = document.getElementById('fair_' + t);
-    fairData[t] = fairEl ? (parseFloat(fairEl.value) || 0.5) : 0.5;
+    const prioEl = document.getElementById('prio_' + t);
+    priorityData[t] = prioEl ? prioEl.value : '';
   });
   return {
     date: document.getElementById('dateInput').value || '(no date set)',
     minGap: parseInt(document.getElementById('minGap').value) || 0,
     teams,
     tracks: tracks.filter(t => t.name && t.name.trim()),
-    criterion, critData, fairData
+    criterion, critData, priorityData,
+    fairData: fairnessScores
   };
 }
 
