@@ -278,7 +278,16 @@ let trackIdSeq = 0;
 let pairHistory = {};
 let fairnessEntries = [];
 let fairnessScores = {};
-let teamRoster = {};
+let teamRoster = {
+  1: { topic: 'LT-L' },
+  2: { topic: 'ST-W' },
+  3: { topic: 'LT-L' },
+  4: { topic: 'ST-L' },
+  5: { topic: 'ST-L' },
+  6: { topic: 'ST-W' },
+  7: { topic: 'LT-W' },
+  8: { topic: 'LT-W' }
+};
 
 function pairKey(a, b) {
   return [String(a), String(b)].sort().join('|');
@@ -367,41 +376,61 @@ function parseWorkbookForHistory(workbook) {
   workbook.SheetNames.forEach(sheetName => {
     const ws = workbook.Sheets[sheetName];
     const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: null });
-    let headerIdx = -1, startCol = -1, endCol = -1;
+
+    // A single sheet can stack several review days one after another (each with its
+    // own "Start time" header row) — find every such header, not just the first, so
+    // each block is treated as its own day for the fairness ranking instead of all
+    // being merged into one.
+    const headerRows = [];
     for (let i = 0; i < rows.length; i++) {
       const r = rows[i];
       if (!r) continue;
       const idx = r.findIndex(c => typeof c === 'string' && c.trim().toLowerCase() === 'start time');
-      if (idx !== -1) { headerIdx = i; startCol = idx; break; }
+      if (idx !== -1) headerRows.push({ rowIdx: i, startCol: idx });
     }
-    if (headerIdx === -1) return;
-    const header = rows[headerIdx];
-    endCol = header.findIndex(c => typeof c === 'string' && c.trim().toLowerCase() === 'end time');
-    const teamCols = [];
-    header.forEach((c, i) => { if (i !== startCol && i !== endCol && c != null && c !== '') teamCols.push(i); });
+    if (!headerRows.length) return;
 
-    for (let r = headerIdx + 1; r < rows.length; r++) {
-      const row = rows[r];
-      if (!row) continue;
-      const stRaw = row[startCol];
-      if (stRaw == null) continue;
-      const st = String(stRaw).trim();
-      if (!/^\d{1,2}:\d{2}/.test(st)) continue;
-      const uniqueSheetKey = sheetName + '::' + startCol;
-      teamCols.forEach(ci => {
-        const val = row[ci];
-        if (val == null || typeof val !== 'string') return;
-        const matches = [...val.matchAll(teamRe)].map(m => parseInt(m[1], 10));
-        if (!matches.length) return;
-        matches.forEach(team => history.push({ team, sheet: uniqueSheetKey, start: st }));
-        for (let a = 0; a < matches.length; a++) {
-          for (let b = a + 1; b < matches.length; b++) {
-            const k = pairKey(matches[a], matches[b]);
-            pairDelta[k] = (pairDelta[k] || 0) + 1;
+    headerRows.forEach((hr, blockIdx) => {
+      const header = rows[hr.rowIdx];
+      const startCol = hr.startCol;
+      const endCol = header.findIndex(c => typeof c === 'string' && c.trim().toLowerCase() === 'end time');
+      const teamCols = [];
+      header.forEach((c, i) => { if (i !== startCol && i !== endCol && c != null && c !== '') teamCols.push(i); });
+
+      // Look a few rows above this header for a "Date" label to build a friendlier,
+      // more accurate block key than just a block index.
+      let dateLabel = null;
+      for (let back = hr.rowIdx - 1; back >= Math.max(0, hr.rowIdx - 5); back--) {
+        const r = rows[back];
+        if (!r) continue;
+        const dIdx = r.findIndex(c => typeof c === 'string' && c.trim().toLowerCase() === 'date');
+        if (dIdx !== -1) { dateLabel = r[dIdx + 1] || null; break; }
+      }
+      const blockKey = sheetName + '::' + blockIdx + (dateLabel ? '::' + dateLabel : '');
+
+      const rowEnd = (blockIdx + 1 < headerRows.length) ? headerRows[blockIdx + 1].rowIdx : rows.length;
+      for (let r = hr.rowIdx + 1; r < rowEnd; r++) {
+        const row = rows[r];
+        if (!row) continue;
+        const stRaw = row[startCol];
+        if (stRaw == null) continue;
+        const st = String(stRaw).trim();
+        if (!/^\d{1,2}:\d{2}/.test(st)) continue;
+        teamCols.forEach(ci => {
+          const val = row[ci];
+          if (val == null || typeof val !== 'string') return;
+          const matches = [...val.matchAll(teamRe)].map(m => parseInt(m[1], 10));
+          if (!matches.length) return;
+          matches.forEach(team => history.push({ team, sheet: blockKey, start: st }));
+          for (let a = 0; a < matches.length; a++) {
+            for (let b = a + 1; b < matches.length; b++) {
+              const k = pairKey(matches[a], matches[b]);
+              pairDelta[k] = (pairDelta[k] || 0) + 1;
+            }
           }
-        }
-      });
-    }
+        });
+      }
+    });
   });
   return { history, pairDelta };
 }
