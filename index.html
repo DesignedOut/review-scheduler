@@ -869,6 +869,116 @@ function validateSchedule(config, schedule) {
   return problems;
 }
 
+function buildComplianceReport(config, schedule) {
+  const { teams, tracks, priorityData } = config;
+  const trackNames = tracks.map(t => t.name);
+  const checks = [];
+
+  const teamAppointments = {};
+  teams.forEach(t => teamAppointments[t] = []);
+  const seenPairs = new Set();
+  const dupTrackIssues = [];
+  const doubleBookIssues = [];
+
+  schedule.forEach(row => {
+    const teamsThisSlot = [];
+    trackNames.forEach(prof => {
+      const item = row.cells[prof];
+      if (!item) return;
+      item.forEach(t => {
+        teamsThisSlot.push(t);
+        const key = t + '|' + prof;
+        if (seenPairs.has(key)) dupTrackIssues.push(`squadra ${t} / ${prof}`);
+        seenPairs.add(key);
+        teamAppointments[t].push({ start: timeToMin(row.start), end: timeToMin(row.end), prof });
+      });
+    });
+    if (new Set(teamsThisSlot).size !== teamsThisSlot.length) doubleBookIssues.push(row.start);
+  });
+
+  const missingCoverage = teams.filter(t => teamAppointments[t].length !== trackNames.length);
+  checks.push({
+    ok: missingCoverage.length === 0 && dupTrackIssues.length === 0,
+    text: trackNames.length > 1
+      ? `Ogni squadra ha visto tutti e ${trackNames.length} i professori, esattamente una volta ciascuno`
+      : 'Ogni squadra è stata assegnata esattamente una volta',
+    detail: missingCoverage.length ? `Copertura incompleta: ${missingCoverage.join(', ')}` :
+            dupTrackIssues.length ? `Visto più volte: ${dupTrackIssues.join(', ')}` : null
+  });
+
+  checks.push({
+    ok: doubleBookIssues.length === 0,
+    text: 'Nessuna squadra impegnata con due professori nello stesso slot orario',
+    detail: doubleBookIssues.length ? `Slot in conflitto: ${doubleBookIssues.join(', ')}` : null
+  });
+
+  const userGap = config.minGap;
+  const defaultGap = Math.max(...tracks.map(t => t.duration));
+  const minGapMinutes = (userGap && userGap > 0) ? userGap : defaultGap;
+  const gapIssues = [];
+  Object.entries(teamAppointments).forEach(([t, appts]) => {
+    const sorted = appts.slice().sort((a, b) => a.start - b.start);
+    for (let i = 1; i < sorted.length; i++) {
+      const gap = sorted[i].start - sorted[i - 1].end;
+      if (gap < minGapMinutes) gapIssues.push(`squadra ${t}: solo ${gap} min tra ${sorted[i-1].prof} e ${sorted[i].prof}`);
+    }
+  });
+  checks.push({
+    ok: gapIssues.length === 0,
+    text: trackNames.length > 1
+      ? `Intervallo minimo di ${minGapMinutes} minuti rispettato tra gli appuntamenti di ogni squadra`
+      : 'Nessun vincolo di intervallo da verificare (un solo professore in agenda)',
+    detail: gapIssues.length ? gapIssues.join('; ') : null
+  });
+
+  const pd = priorityData || {};
+  const earlyTeams = teams.filter(t => pd[t] === 'early');
+  const lateTeams = teams.filter(t => pd[t] === 'late');
+  if (earlyTeams.length || lateTeams.length) {
+    let priorityOk = true;
+    const detailParts = [];
+    trackNames.forEach(prof => {
+      const order = [];
+      schedule.forEach((row, idx) => { if (row.cells[prof]) row.cells[prof].forEach(t => order.push({ t, idx })); });
+      const earlyIdxs = order.filter(o => pd[o.t] === 'early').map(o => o.idx);
+      const lateIdxs = order.filter(o => pd[o.t] === 'late').map(o => o.idx);
+      const otherIdxs = order.filter(o => pd[o.t] !== 'early' && pd[o.t] !== 'late').map(o => o.idx);
+      if (earlyIdxs.length && otherIdxs.length && Math.max(...earlyIdxs) > Math.min(...otherIdxs)) {
+        priorityOk = false; detailParts.push(`${prof}: una squadra "prefer early" non è tra le prime`);
+      }
+      if (lateIdxs.length && otherIdxs.length && Math.min(...lateIdxs) < Math.max(...otherIdxs)) {
+        priorityOk = false; detailParts.push(`${prof}: una squadra "prefer late" non è tra le ultime`);
+      }
+    });
+    checks.push({
+      ok: priorityOk,
+      text: `Preferenze di priorità rispettate (${earlyTeams.length} squadra/e in anticipo, ${lateTeams.length} in coda)`,
+      detail: detailParts.length ? detailParts.join('; ') : null
+    });
+  }
+
+  return checks;
+}
+
+function renderComplianceReport(checks, repeatPairings, historyTracked) {
+  const allOk = checks.every(c => c.ok);
+  const items = checks.map(c => `
+    <div style="display:flex; gap:8px; align-items:flex-start; margin-bottom:6px;">
+      <span style="color:${c.ok ? 'var(--teal)' : '#c0392b'}; font-weight:700;">${c.ok ? '✓' : '✗'}</span>
+      <span>${c.text}${c.detail ? `<br><span style="color:var(--muted); font-size:12px;">${c.detail}</span>` : ''}</span>
+    </div>`).join('');
+  const repeatLine = repeatPairings > 0
+    ? `<div style="display:flex; gap:8px; align-items:flex-start;">
+        <span style="color:#c9891f; font-weight:700;">!</span>
+        <span>${repeatPairings} abbinamento/i ripete/ono una combinazione già vista nello storico — inevitabile con i vincoli attuali.</span>
+      </div>`
+    : historyTracked
+      ? `<div style="display:flex; gap:8px; align-items:flex-start;"><span style="color:var(--teal); font-weight:700;">✓</span><span>Nessun abbinamento ripetuto rispetto allo storico caricato.</span></div>`
+      : '';
+  const cls = allOk ? 'ok' : 'warn';
+  return `<div class="${cls}"><strong>${allOk ? 'Schedule generato rispettando tutti i requisiti:' : 'Attenzione — alcuni requisiti non sono soddisfatti:'}</strong><div style="margin-top:8px">${items}${repeatLine}</div></div>`;
+}
+
 function collectConfig() {
   const teams = getTeams();
   const criterion = document.getElementById('criterion').value;
@@ -909,19 +1019,11 @@ function generate() {
     messages.innerHTML = `<div class="warn">${e.message}</div>`;
     return;
   }
-  const problems = validateSchedule(config, result.schedule);
   lastSchedule = result.schedule;
   lastConfig = config;
 
-  const repeatNote = result.meta.repeatPairings > 0
-    ? ` ${result.meta.repeatPairings} pairing(s) in this schedule repeat a combination from your imported history — that was unavoidable given the constraints.`
-    : Object.keys(pairHistory).length ? ' No repeat pairings from your history.' : '';
-
-  if (problems.length) {
-    messages.innerHTML = '<div class="warn"><strong>Check these:</strong><br>' + problems.join('<br>') + '</div>';
-  } else {
-    messages.innerHTML = `<div class="ok">No conflicts. Every team scheduled correctly with adequate spacing.${repeatNote}</div>`;
-  }
+  const checks = buildComplianceReport(config, result.schedule);
+  messages.innerHTML = renderComplianceReport(checks, result.meta.repeatPairings, Object.keys(pairHistory).length > 0);
 
   const wrap = document.getElementById('resultWrap');
   const profNames = config.tracks.map(t => t.name);
@@ -932,12 +1034,17 @@ function generate() {
     html += `<tr><td>${row.start}</td><td>${row.end}</td>`;
     profNames.forEach(p => {
       const item = row.cells[p];
-      html += `<td>${item ? item.map(t => 'TEAM ' + t).join(' + ') : ''}</td>`;
+      html += `<td>${item ? item.map(formatTeamWithTopic).join(' + ') : ''}</td>`;
     });
     html += '</tr>';
   });
   html += '</tbody></table>';
   wrap.innerHTML = html;
+}
+
+function formatTeamWithTopic(t) {
+  const topic = teamRoster[t] && teamRoster[t].topic;
+  return topic ? `TEAM ${t} (${topic})` : `TEAM ${t}`;
 }
 
 function buildAOA(config, schedule) {
@@ -948,7 +1055,7 @@ function buildAOA(config, schedule) {
   aoa.push([]);
   aoa.push(['Start time', 'End time', ...profNames.map(p => `Group (${p})`)]);
   schedule.forEach(row => {
-    const cells = profNames.map(p => row.cells[p] ? row.cells[p].map(t => 'TEAM ' + t).join(' + ') : '');
+    const cells = profNames.map(p => row.cells[p] ? row.cells[p].map(formatTeamWithTopic).join(' + ') : '');
     aoa.push([row.start, row.end, ...cells]);
   });
   return aoa;
