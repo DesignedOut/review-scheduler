@@ -737,17 +737,46 @@ function buildSchedule(config) {
     return penalty;
   }
 
-  // Rotate each partition independently, and independently per track, so tracks with
-  // overlapping start times can still resolve conflicts against each other — while
-  // teams in earlyPart/latePart always land in the first/last seats of every track's
-  // own sequence (their guarantee never moves, only who else shares their partition).
+  // Rotate/shuffle each partition independently, and independently per track, so
+  // tracks with overlapping start times can still resolve conflicts against each
+  // other — while teams in earlyPart/latePart always land in the first/last seats
+  // of every track's own sequence (their guarantee never moves, only who else
+  // shares their partition).
+  //
+  // A plain rotation of a fixed sequence only ever changes WHERE the chunk
+  // boundaries fall — it never changes who is adjacent to whom in the circle, so
+  // each team only ever has 2 possible chunk-mates reachable across every attempt.
+  // For "random" (no meaningful order to protect) we fully reshuffle each attempt,
+  // which can reach any pairing. For criteria with a meaningful order (criticality/
+  // topic/opposite_grades) we keep rotation as the primary move but add a few
+  // random swaps on top, to widen the reachable combinations without abandoning
+  // the criterion's intent.
+  function shuffleFull(arr) {
+    const a = arr.slice();
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  }
+  function perturb(arr, swaps) {
+    const a = arr.slice();
+    for (let s = 0; s < swaps && a.length > 1; s++) {
+      const i = Math.floor(Math.random() * a.length);
+      const j = Math.floor(Math.random() * a.length);
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  }
   function trackSequence(attempt) {
-    const rotPart = (part) => {
+    const processPart = (part) => {
       if (!part.length) return [];
       if (attempt === 0) return part.slice();
-      return rotate(part, Math.floor(Math.random() * part.length));
+      if (criterion === 'random') return shuffleFull(part);
+      const rotated = rotate(part, Math.floor(Math.random() * part.length));
+      return perturb(rotated, Math.min(3, Math.floor(part.length / 2)));
     };
-    return [...rotPart(earlyPart), ...rotPart(normalPart), ...rotPart(latePart)];
+    return [...processPart(earlyPart), ...processPart(normalPart), ...processPart(latePart)];
   }
 
   const maxAttempts = 400;
