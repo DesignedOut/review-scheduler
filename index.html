@@ -1766,7 +1766,7 @@ function buildPdf(JsPDF, ctx, docIn, mode) {
       c => appts.filter(ap => ap.prof === c.label).sort((p, q) => p.start - q.start).map(ap => ({ start: ap.start, end: ap.end, pal: palOf(ap.prof), lines: isAllGroups(ap.teams, nAllT) ? ['ALL GROUPS'] : ap.teams.map(t => 'TEAM ' + t) })));
   } else {
     vertical('Timeline by team', allTeams.map(t => ({ label: 'TEAM ' + t, sub: topics[t] || '', key: t, gaps: true })),
-      c => appts.filter(ap => ap.teams.includes(c.key)).sort((p, q) => p.start - q.start).map(ap => ({ start: ap.start, end: ap.end, pal: palOf(ap.prof), lines: [ap.prof] })));
+      c => appts.filter(ap => ap.teams.includes(c.key)).sort((p, q) => p.start - q.start).map(ap => ({ start: ap.start, end: ap.end, pal: palOf(ap.prof), lines: [ap.prof, ...(isAllGroups(ap.teams, nAllT) || ap.teams.length < 2 ? [] : ['with ' + ap.teams.filter(o => o !== c.key).map(o => 'TEAM ' + o).join(' + ')])] })));
   }
   return doc;
   // ----- table with all times (not exported any more) -----
