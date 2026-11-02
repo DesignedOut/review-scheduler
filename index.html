@@ -7,6 +7,8 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <style>
   :root {
     --accent: #4f46e5;
@@ -172,6 +174,38 @@
     margin-top: 12px;
   }
   #resultWrap h2 { margin-top: 4px; }
+  .tl-card { background: var(--card, #fff); border: 1px solid var(--border-soft, #edeef5); border-radius: 14px; padding: 18px 20px; margin: 18px 0; box-shadow: var(--shadow, 0 1px 2px rgba(30,30,60,.04), 0 4px 14px rgba(30,30,60,.06)); }
+  .tl-head { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; margin-bottom: 12px; }
+  .tl-seg { display: inline-flex; border: 1px solid var(--border, #e4e4ee); border-radius: 8px; overflow: hidden; }
+  .tl-seg button { border: 0; border-radius: 0; padding: 6px 14px; font-size: 12.5px; background: #fff; box-shadow: none; }
+  .tl-seg button.on { background: #4f46e5; color: #fff; }
+  .tl-legend, .tl-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .tl-pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 999px; border: 1px solid transparent; }
+  .tl-pill i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+  .tl-chip { font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--border, #e4e4ee); background: #fff; cursor: pointer; font-family: inherit; box-shadow: none; }
+  .tl-chip.on { background: #1c1f2a; color: #fff; border-color: #1c1f2a; }
+  .tl-scroll { overflow-x: auto; border: 1px solid var(--border-soft, #edeef5); border-radius: 10px; background: #fff; }
+  .tl-inner { position: relative; }
+  .tl-axis { position: relative; height: 28px; border-bottom: 1px solid #e4e4ee; background: #fafbff; }
+  .tl-tick { position: absolute; top: 0; bottom: 0; border-left: 1px solid #eceef6; }
+  .tl-tick.major { border-left-color: #cfd3e6; }
+  .tl-tick span { position: absolute; top: 6px; left: 4px; font-size: 11px; color: #6b7280; white-space: nowrap; }
+  .tl-row { position: relative; border-bottom: 1px solid #eef0f7; }
+  .tl-row:last-child { border-bottom: 0; }
+  .tl-label { position: sticky; left: 0; z-index: 4; background: #fff; border-right: 1px solid #e4e4ee; display: flex; align-items: center; padding: 0 10px; font-size: 12.5px; font-weight: 700; box-sizing: border-box; }
+  .tl-label small { display: block; font-weight: 500; color: #6b7280; font-size: 11px; }
+  .tl-grid { position: absolute; top: 0; bottom: 0; border-left: 1px solid #f1f2f8; z-index: 0; }
+  .tl-grid.major { border-left-color: #e3e6f2; }
+  .tl-block { position: absolute; z-index: 2; box-sizing: border-box; border-radius: 7px; border-left: 4px solid; padding: 4px 7px; overflow: hidden; font-size: 12px; line-height: 1.25; transition: opacity .12s, box-shadow .12s; cursor: default; }
+  .tl-block b { font-weight: 700; display: block; white-space: nowrap; }
+  .tl-block span { display: block; color: #4b5563; font-size: 10.5px; white-space: nowrap; }
+  .tl-block .tm { color: #6b7280; font-size: 10px; }
+  .tl-block.hl { box-shadow: 0 0 0 2px #1c1f2a; z-index: 3; }
+  .tl-block.dim { opacity: .22; }
+  .tl-gap { position: absolute; z-index: 1; font-size: 10.5px; text-align: center; color: #9aa0b2; }
+  .tl-gap.warn { color: #b45309; font-weight: 700; }
+  .tl-gap.bad { color: #b91c1c; font-weight: 700; }
+  .tl-note { font-size: 12px; color: #6b7280; margin-top: 10px; }
 </style>
 </head>
 <body>
@@ -260,11 +294,13 @@
 <div class="actions">
   <button class="primary" onclick="generate()">Generate schedule</button>
   <button onclick="downloadExcel()">Download as Excel</button>
+  <button onclick="downloadPDF()">Download as PDF</button>
   <button onclick="downloadCSV()">Download as CSV</button>
   <button onclick="saveToHistory()">Save this schedule's pairings to history</button>
 </div>
 
 <div id="messages"></div>
+<div id="timelineWrap" class="tl-card" style="display:none"></div>
 <div id="resultWrap"></div>
 
 <script>
@@ -1086,6 +1122,115 @@ function collectConfig() {
   };
 }
 
+const TL_COLORS = [
+  { c: '#4f46e5', bg: '#eef0ff' }, { c: '#0f766e', bg: '#e1f5f2' },
+  { c: '#c2410c', bg: '#fff0e6' }, { c: '#a21caf', bg: '#fbeafe' }, { c: '#0369a1', bg: '#e3f2fb' }
+];
+function tlEsc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch])); }
+function tlFmt(m) { return String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0'); }
+
+function renderTimeline(el, appts, profs, topics, opts) {
+  opts = opts || {};
+  const st = el._tl = el._tl || { mode: 'prof', sel: new Set() };
+  if (opts.mode) st.mode = opts.mode;
+  el._tlArgs = [appts, profs, topics, opts];
+  if (!appts.length) { el.innerHTML = ''; return; }
+  topics = topics || {};
+  const LW = 118, PPM = 6;
+  const t0 = Math.floor(Math.min(...appts.map(a => a.start)) / 30) * 30;
+  const t1 = Math.ceil(Math.max(...appts.map(a => a.end)) / 30) * 30;
+  const W = (t1 - t0) * PPM;
+  const col = p => TL_COLORS[profs.indexOf(p) % TL_COLORS.length];
+  const x = m => LW + (m - t0) * PPM;
+  const cmp = (a, b) => String(a).localeCompare(String(b), undefined, { numeric: true });
+  const allTeams = [...new Set(appts.flatMap(a => a.teams))].sort(cmp);
+  const minGap = opts.minGap || 0;
+
+  let grid = '', axis = '';
+  for (let m = t0; m <= t1; m += 15) {
+    const major = (m % 30 === 0);
+    grid += `<div class="tl-grid ${major ? 'major' : ''}" style="left:${x(m)}px"></div>`;
+    axis += `<div class="tl-tick ${major ? 'major' : ''}" style="left:${x(m)}px">${major ? `<span>${tlFmt(m)}</span>` : ''}</div>`;
+  }
+
+  let rows = '';
+  if (st.mode === 'prof') {
+    const H = 64;
+    profs.forEach(p => {
+      const c = col(p);
+      const mine = appts.filter(a => a.prof === p);
+      rows += `<div class="tl-row" style="height:${H}px;width:${LW + W}px">${grid}
+        <div class="tl-label" style="width:${LW}px;height:${H}px;color:${c.c}">${tlEsc(p)}</div>`;
+      mine.forEach(a => {
+        const tt = a.teams.map(t => `TEAM ${t}${topics[t] ? ' (' + topics[t] + ')' : ''}`).join(' + ');
+        rows += `<div class="tl-block" data-teams="${a.teams.join(',')}" title="${tlEsc(p)} ${tlFmt(a.start)}–${tlFmt(a.end)} · ${tlEsc(tt)}"
+          style="left:${x(a.start)}px;width:${(a.end - a.start) * PPM - 2}px;top:7px;height:${H - 14}px;background:${c.bg};border-left-color:${c.c}">
+          <b>${a.teams.map(t => 'T' + tlEsc(t)).join(' + ')}</b>
+          <span>${a.teams.map(t => tlEsc(topics[t] || '')).filter(Boolean).join(' · ')}</span>
+          ${(a.end - a.start) >= 25 ? `<span class="tm">${tlFmt(a.start)}–${tlFmt(a.end)}</span>` : `<span class="tm">${tlFmt(a.start)}</span>`}</div>`;
+      });
+      rows += '</div>';
+    });
+  } else {
+    const H = 50;
+    allTeams.forEach(t => {
+      const mine = appts.filter(a => a.teams.includes(t)).sort((a, b) => a.start - b.start);
+      rows += `<div class="tl-row" style="height:${H}px;width:${LW + W}px">${grid}
+        <div class="tl-label" style="width:${LW}px;height:${H}px"><div>TEAM ${tlEsc(t)}<small>${tlEsc(topics[t] || '')}</small></div></div>`;
+      mine.forEach((a, i) => {
+        const c = col(a.prof);
+        const partners = a.teams.filter(o => o !== t).map(o => 'T' + o);
+        rows += `<div class="tl-block" data-teams="${tlEsc(t)}" title="${tlEsc(a.prof)} ${tlFmt(a.start)}–${tlFmt(a.end)}${partners.length ? ' · con ' + partners.join(', ') : ''}"
+          style="left:${x(a.start)}px;width:${(a.end - a.start) * PPM - 2}px;top:5px;height:${H - 10}px;background:${c.bg};border-left-color:${c.c}">
+          <b style="color:${c.c}">${tlEsc(a.prof)}</b>
+          <span class="tm">${(a.end - a.start) >= 25 ? tlFmt(a.start) + '–' + tlFmt(a.end) : tlFmt(a.start)}${partners.length ? ' · ' + partners.join(',') : ''}</span></div>`;
+        const nx = mine[i + 1];
+        if (nx) {
+          const gap = nx.start - a.end;
+          const cls = gap < 0 ? 'bad' : (minGap && gap < minGap ? 'warn' : '');
+          const mid = (a.end + nx.start) / 2;
+          rows += `<div class="tl-gap ${cls}" style="left:${x(mid) - 24}px;width:48px;top:${H / 2 - 8}px">${gap < 0 ? 'sovrapp.' : gap + '′'}</div>`;
+        }
+      });
+      rows += '</div>';
+    });
+  }
+
+  const legend = profs.map(p => { const c = col(p); return `<span class="tl-pill" style="background:${c.bg};color:${c.c}"><i style="background:${c.c}"></i>${tlEsc(p)}</span>`; }).join('');
+  const chips = allTeams.map(t => `<button class="tl-chip ${st.sel.has(String(t)) ? 'on' : ''}" data-chip="${tlEsc(t)}">T${tlEsc(t)}</button>`).join('');
+  el.innerHTML = `
+    <div class="tl-head">
+      <div class="tl-seg"><button data-mode="prof" class="${st.mode === 'prof' ? 'on' : ''}">Per professore</button><button data-mode="team" class="${st.mode === 'team' ? 'on' : ''}">Per squadra</button></div>
+      <div class="tl-legend">${legend}</div>
+    </div>
+    <div class="tl-chips" style="margin-bottom:10px"><span style="font-size:12px;color:#6b7280">Evidenzia squadra:</span>${chips}</div>
+    <div class="tl-scroll"><div class="tl-inner" style="width:${LW + W}px">
+      <div class="tl-axis" style="width:${LW + W}px">${axis}</div>${rows}</div></div>
+    <div class="tl-note">${st.mode === 'prof' ? 'Ogni corsia è un professore: i blocchi alla stessa altezza orizzontale sono in parallelo. Passa il mouse su un blocco per seguire la squadra negli altri professori.' : 'Ogni riga è una squadra; il numero tra i blocchi è l\'intervallo in minuti (rosso = sovrapposizione' + (minGap ? ', arancione = sotto i ' + minGap + ' min' : '') + ').'}</div>`;
+
+  const blocks = el.querySelectorAll('.tl-block');
+  const apply = (set) => {
+    blocks.forEach(b => {
+      if (!set.size) { b.classList.remove('dim', 'hl'); return; }
+      const hit = b.dataset.teams.split(',').some(t => set.has(t));
+      b.classList.toggle('dim', !hit); b.classList.toggle('hl', hit);
+    });
+  };
+  apply(st.sel);
+  blocks.forEach(b => {
+    b.addEventListener('mouseenter', () => { if (!st.sel.size) apply(new Set(b.dataset.teams.split(','))); });
+    b.addEventListener('mouseleave', () => apply(st.sel));
+  });
+  el.querySelectorAll('[data-chip]').forEach(ch => ch.addEventListener('click', () => {
+    const k = ch.dataset.chip;
+    if (st.sel.has(k)) st.sel.delete(k); else st.sel.add(k);
+    renderTimeline(el, ...el._tlArgs);
+  }));
+  el.querySelectorAll('[data-mode]').forEach(bt => bt.addEventListener('click', () => {
+    st.mode = bt.dataset.mode; renderTimeline(el, ...el._tlArgs);
+  }));
+}
+
 function generate() {
   const config = collectConfig();
   const messages = document.getElementById('messages');
@@ -1113,6 +1258,20 @@ function generate() {
   if (result.meta.priorityRelaxed) {
     messages.innerHTML += `<div class="warn">Le priorità early/late non erano compatibili con gli orari dei professori: sono state rilassate per trovare uno schedule valido.</div>`;
   }
+
+  const tlEl = document.getElementById('timelineWrap');
+  const tlAppts = [];
+  result.schedule.forEach(row => {
+    config.tracks.forEach(tr => {
+      const item = row.cells[tr.name];
+      if (item) tlAppts.push({ prof: tr.name, start: timeToMin(row.start), end: timeToMin(row.end), teams: item });
+    });
+  });
+  const tlTopics = {};
+  config.teams.forEach(t => { if (teamRoster[t] && teamRoster[t].topic) tlTopics[t] = teamRoster[t].topic; });
+  tlEl.style.display = 'block';
+  tlEl._tl = null;
+  renderTimeline(tlEl, tlAppts, config.tracks.map(t => t.name), tlTopics, { minGap: config.minGapUsed || 0 });
 
   const wrap = document.getElementById('resultWrap');
   const profNames = config.tracks.map(t => t.name);
@@ -1150,13 +1309,349 @@ function buildAOA(config, schedule) {
   return aoa;
 }
 
-function downloadExcel() {
+function downloadExcelBasic() {
   if (!lastSchedule) { generate(); if (!lastSchedule) return; }
   const aoa = buildAOA(lastConfig, lastSchedule);
   const ws = XLSX.utils.aoa_to_sheet(aoa);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Review');
   XLSX.writeFile(wb, `review_schedule_${lastConfig.date}.xlsx`);
+}
+
+/* ===== Export: Excel (ExcelJS) + PDF (jsPDF), in the visual language of Martina's master Excel ===== */
+const XL_NAVY = 'FF002060';
+const XL_PALETTE = [
+  { bar: 'FF8EA9DB', fill: 'FFD9E2F3', font: 'FF1F3864', pdf: [217, 226, 243], pdfLine: [47, 84, 150] },
+  { bar: 'FF7FCDBF', fill: 'FFD5EFE9', font: 'FF0B4F47', pdf: [213, 239, 233], pdfLine: [15, 118, 110] },
+  { bar: 'FFF4B183', fill: 'FFFCE4D6', font: 'FF8A3A12', pdf: [252, 228, 214], pdfLine: [194, 65, 12] },
+  { bar: 'FFD7A0E0', fill: 'FFF1D9F5', font: 'FF6B0F78', pdf: [241, 217, 245], pdfLine: [162, 28, 175] },
+  { bar: 'FF8DC3E8', fill: 'FFDDEBF7', font: 'FF0C4A6E', pdf: [221, 235, 247], pdfLine: [3, 105, 161] }
+];
+
+function exportCtx() {
+  const config = lastConfig, schedule = lastSchedule;
+  const profs = config.tracks.map(t => t.name);
+  const appts = [];
+  schedule.forEach(row => profs.forEach(p => {
+    const item = row.cells[p];
+    if (item) appts.push({ prof: p, start: timeToMin(row.start), end: timeToMin(row.end), teams: item });
+  }));
+  const topics = {};
+  config.teams.forEach(t => { if (teamRoster[t] && teamRoster[t].topic) topics[t] = teamRoster[t].topic; });
+  let weekday = '';
+  const d = new Date(config.date + 'T00:00:00');
+  if (!isNaN(d)) weekday = d.toLocaleDateString('en-US', { weekday: 'long' }).toUpperCase();
+  return { config, schedule, profs, appts, topics, weekday, minGap: config.minGapUsed || 0 };
+}
+function xlTeamText(t, topics) { return 'TEAM ' + t + (topics[t] ? ' (' + topics[t] + ')' : ''); }
+function xlFmt(m) { return String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0'); }
+
+function buildExcelWorkbook(ExcelJS, ctx) {
+  const { config, schedule, profs, appts, topics, weekday, minGap } = ctx;
+  const wb = new ExcelJS.Workbook();
+  const thin = { style: 'thin', color: { argb: 'FF000000' } };
+  const hair = { style: 'thin', color: { argb: 'FFE3E6F2' } };
+  const allThin = { top: thin, left: thin, bottom: thin, right: thin };
+  const navyCell = (c, size) => {
+    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: XL_NAVY } };
+    c.font = { name: 'Manrope', size: size || 12, color: { argb: 'FFFFFFFF' } };
+    c.border = allThin;
+    c.alignment = { vertical: 'middle', horizontal: 'left' };
+  };
+  const plain = (c, bold) => {
+    c.font = { name: 'Manrope', size: 12, bold: !!bold };
+    c.border = allThin;
+    c.alignment = { vertical: 'middle', wrapText: true };
+  };
+
+  // ---- Sheet 1: Review (same layout as the master file) ----
+  const ws = wb.addWorksheet('Review');
+  ws.getColumn(1).width = 16; ws.getColumn(2).width = 16;
+  profs.forEach((p, i) => ws.getColumn(3 + i).width = 36);
+  ws.getCell(1, 1).value = 'Date'; navyCell(ws.getCell(1, 1));
+  ws.getCell(1, 2).value = config.date; plain(ws.getCell(1, 2));
+  ws.getCell(1, 3).value = weekday; plain(ws.getCell(1, 3));
+  ws.getCell(2, 1).value = 'Professor(s)'; navyCell(ws.getCell(2, 1));
+  ws.getCell(2, 2).value = profs.join(' / '); plain(ws.getCell(2, 2));
+  ws.getCell(4, 1).value = 'Start time'; ws.getCell(4, 2).value = 'End time';
+  profs.forEach((p, i) => ws.getCell(4, 3 + i).value = 'Group (' + p + ')');
+  for (let c = 1; c <= 2 + profs.length; c++) navyCell(ws.getCell(4, c));
+  schedule.forEach((row, r) => {
+    const R = 5 + r;
+    ws.getCell(R, 1).value = row.start; plain(ws.getCell(R, 1), true);
+    ws.getCell(R, 2).value = row.end; plain(ws.getCell(R, 2));
+    profs.forEach((p, i) => {
+      const item = row.cells[p];
+      const cell = ws.getCell(R, 3 + i);
+      cell.value = item ? item.map(t => xlTeamText(t, topics)).join(' + ') : '';
+      plain(cell);
+      if (item) { const pal = XL_PALETTE[i % XL_PALETTE.length]; cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: pal.fill } }; }
+    });
+  });
+  ws.views = [{ state: 'frozen', ySplit: 4 }];
+
+  // ---- Editable Gantt sheets (one row per appointment; bars are conditional formatting driven by Start/End cells) ----
+  const allMin = appts.flatMap(a => [a.start, a.end]);
+  const STEP = 5;
+  const t0 = Math.floor(Math.min(...allMin) / 30) * 30;
+  const t1 = Math.ceil(Math.max(...allMin) / 30) * 30;
+  const nCols = (t1 - t0) / STEP;
+  const G0 = 6; // first grid column (F)
+  const colL = n => { let s = ''; while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; };
+  const day = m => m / 1440;
+  const allTeams = [...new Set(appts.flatMap(a => a.teams))].sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }));
+  const fillOf = argb => ({ type: 'pattern', pattern: 'solid', fgColor: { argb } });
+
+  function ganttSheet(name, heads, rows, extraE) {
+    const g = wb.addWorksheet(name);
+    g.getColumn(1).width = 22; g.getColumn(2).width = 34; g.getColumn(3).width = 9; g.getColumn(4).width = 9; g.getColumn(5).width = 10;
+    for (let c = 0; c < nCols; c++) g.getColumn(G0 + c).width = 3.1;
+    g.getCell(1, 1).value = 'Date'; navyCell(g.getCell(1, 1));
+    g.getCell(1, 2).value = config.date + (weekday ? '   ' + weekday : ''); plain(g.getCell(1, 2));
+    g.getCell(2, 1).value = 'Professor(s)'; navyCell(g.getCell(2, 1));
+    g.getCell(2, 2).value = profs.join(' / '); plain(g.getCell(2, 2));
+    g.getCell(3, 1).value = 'Modifica Start/End (o i team): le barre si spostano da sole.'; g.getCell(3, 1).font = { name: 'Manrope', size: 9, italic: true, color: { argb: 'FF6B7280' } };
+    // header row 4 : labels + one cell per 5 min holding the real time value (rotated)
+    g.getRow(4).height = 40;
+    heads.forEach((h, i) => { const c = g.getCell(4, 1 + i); c.value = h; navyCell(c); });
+    for (let k = 0; k < nCols; k++) {
+      const c = g.getCell(4, G0 + k);
+      c.value = day(t0 + k * STEP); c.numFmt = 'hh:mm';
+      navyCell(c, 8); c.alignment = { textRotation: 90, vertical: 'middle', horizontal: 'center' };
+    }
+    rows.forEach((r, i) => {
+      const R = 5 + i;
+      g.getCell(R, 1).value = r.a; g.getCell(R, 2).value = r.b;
+      g.getCell(R, 3).value = day(r.start); g.getCell(R, 4).value = day(r.end);
+      [3, 4].forEach(c => { g.getCell(R, c).numFmt = 'hh:mm'; });
+      g.getCell(R, 5).value = extraE(R, r);
+      for (let c = 1; c <= 5; c++) { const cell = g.getCell(R, c); cell.font = { name: 'Manrope', size: 11, bold: c === 3 }; cell.border = allThin; cell.alignment = { vertical: 'middle', horizontal: c >= 3 ? 'center' : 'left', wrapText: c === 2 }; }
+      for (let k = 0; k < nCols; k++) {
+        const major = ((t0 + k * STEP) % 30 === 0);
+        g.getCell(R, G0 + k).border = { top: hair, bottom: hair, left: major ? { style: 'thin', color: { argb: 'FFB8BED6' } } : hair, right: hair };
+      }
+      g.getRow(R).height = 26;
+    });
+    const last = 4 + rows.length;
+    const firstG = colL(G0), lastG = colL(G0 + nCols - 1);
+    const pcol = name === 'Timeline' ? 'A' : 'B';
+    profs.forEach((p, i) => {
+      const pal = XL_PALETTE[i % XL_PALETTE.length];
+      g.addConditionalFormatting({
+        ref: `${firstG}5:${lastG}${last}`,
+        rules: [{ type: 'expression', priority: i + 1, formulae: [`AND($${pcol}5="${p}",${firstG}$4>=$C5-0.0000001,${firstG}$4<$D5-0.0000001)`], style: { fill: { type: 'pattern', pattern: 'solid', bgColor: { argb: pal.bar } } } }]
+      });
+      g.addConditionalFormatting({
+        ref: `${pcol}5:${pcol}${last}`,
+        rules: [{ type: 'expression', priority: 20 + i, formulae: [`$${pcol}5="${p}"`], style: { fill: { type: 'pattern', pattern: 'solid', bgColor: { argb: pal.fill } }, font: { bold: true, color: { argb: pal.font } } } }]
+      });
+    });
+    g.views = [{ state: 'frozen', xSplit: 5, ySplit: 4 }];
+    g.pageSetup = { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9 };
+    return g;
+  }
+
+  const byProf = [];
+  profs.forEach(p => appts.filter(a => a.prof === p).sort((x, y) => x.start - y.start).forEach(a => byProf.push({ a: p, b: a.teams.map(t => xlTeamText(t, topics)).join(' + '), start: a.start, end: a.end })));
+  ganttSheet('Timeline', ['Professor', 'Team(s)', 'Start', 'End', 'Min'], byProf, (R) => ({ formula: `ROUND((D${R}-C${R})*1440,0)` }));
+
+  const byTeam = [];
+  allTeams.forEach(t => appts.filter(a => a.teams.includes(t)).sort((x, y) => x.start - y.start).forEach(a => {
+    const partners = a.teams.filter(o => o !== t).map(o => 'T' + o);
+    byTeam.push({ a: xlTeamText(t, topics), b: a.prof, start: a.start, end: a.end, team: t, partners });
+  }));
+  // Per squadra: A=team, B=professor ; E = gap (min) from previous row of the same team
+  const gT = ganttSheet('Per squadra', ['Team', 'Professor', 'Start', 'End', 'Gap (min)'], byTeam, (R) => ({ formula: `IF(A${R}=A${R - 1},ROUND((C${R}-D${R - 1})*1440,0),"")` }));
+  const lastT = 4 + byTeam.length;
+  gT.addConditionalFormatting({ ref: `E5:E${lastT}`, rules: [
+    { type: 'expression', priority: 40, formulae: ['AND(ISNUMBER($E5),$E5<0)'], style: { fill: { type: 'pattern', pattern: 'solid', bgColor: { argb: 'FFFECACA' } }, font: { bold: true, color: { argb: 'FFB91C1C' } } } },
+    ...(minGap ? [{ type: 'expression', priority: 41, formulae: [`AND(ISNUMBER($E5),$E5>=0,$E5<${minGap})`], style: { fill: { type: 'pattern', pattern: 'solid', bgColor: { argb: 'FFFDE68A' } } } }] : [])
+  ] });
+  return wb;
+}
+
+async function downloadExcel() {
+  if (!lastSchedule) { generate(); if (!lastSchedule) return; }
+  const ctx = exportCtx();
+  if (typeof ExcelJS === 'undefined') { downloadExcelBasic(); return; }
+  const wb = buildExcelWorkbook(ExcelJS, ctx);
+  const buf = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `review_schedule_${ctx.config.date}.xlsx`;
+  a.click();
+}
+
+/* ---------------- PDF ---------------- */
+function buildPdf(JsPDF, ctx) {
+  const { config, schedule, profs, appts, topics, weekday, minGap } = ctx;
+  const doc = new JsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
+  const PW = 842, PH = 595, M = 28, LW = 96;
+  const navy = [0, 32, 96];
+  const palOf = p => XL_PALETTE[profs.indexOf(p) % XL_PALETTE.length];
+  const tt = t => 'TEAM ' + t + (topics[t] ? ' (' + topics[t] + ')' : '');
+  const allMin = appts.flatMap(a => [a.start, a.end]);
+  const T0 = Math.floor(Math.min(...allMin) / 30) * 30, T1 = Math.ceil(Math.max(...allMin) / 30) * 30;
+  const allTeams = [...new Set(appts.flatMap(a => a.teams))].sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }));
+  const WIN = 210; // minutes per timeline panel
+  const gridW = PW - 2 * M - LW;
+
+  function header(title) {
+    doc.setFillColor(...navy); doc.rect(M, M, PW - 2 * M, 34, 'F');
+    doc.setTextColor(255, 255, 255); doc.setFont('helvetica', 'bold'); doc.setFontSize(12);
+    doc.text(`Date: ${config.date}${weekday ? '   ' + weekday : ''}`, M + 10, M + 14);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
+    doc.text(`Professor(s): ${profs.join(' / ')}`, M + 10, M + 28);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(10);
+    doc.text(title, PW - M - 10, M + 14, { align: 'right' });
+    let lx = PW - M - 10;
+    doc.setFontSize(8);
+    [...profs].reverse().forEach((p, i) => {
+      const pal = palOf(p), w = doc.getTextWidth(p) + 14;
+      lx -= w;
+      doc.setFillColor(...pal.pdf); doc.setDrawColor(...pal.pdfLine); doc.rect(lx, M + 20, w - 4, 11, 'FD');
+      doc.setTextColor(...pal.pdfLine); doc.setFont('helvetica', 'bold'); doc.text(p, lx + (w - 4) / 2, M + 28, { align: 'center' });
+    });
+    return M + 34 + 14;
+  }
+
+  function axis(y, a, b, px) {
+    doc.setFillColor(...navy); doc.rect(M, y, PW - 2 * M, 16, 'F');
+    doc.setTextColor(255, 255, 255); doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5);
+    doc.text('Time', M + 6, y + 11);
+    for (let m = a; m <= b; m += 15) {
+      const x = M + LW + (m - a) * px;
+      doc.text(xlFmt(m), x + 2, y + 11);
+      doc.setDrawColor(210, 214, 230); doc.setLineWidth(0.3);
+    }
+    return y + 16;
+  }
+  function gridLines(y0, y1, a, b, px) {
+    for (let m = a; m <= b; m += 15) {
+      const x = M + LW + (m - a) * px;
+      doc.setDrawColor(m % 30 === 0 ? 170 : 215, m % 30 === 0 ? 176 : 219, m % 30 === 0 ? 200 : 232); doc.setLineWidth(0.3);
+      doc.line(x, y0, x, y1);
+    }
+  }
+  function block(x, y, w, h, pal, lines, boldFirst) {
+    doc.setFillColor(...pal.pdf); doc.setDrawColor(...pal.pdfLine); doc.setLineWidth(1);
+    doc.roundedRect(x + 0.5, y, Math.max(w - 1, 1), h, 2, 2, 'FD');
+    doc.setTextColor(...pal.pdfLine);
+    let ty = y + 9;
+    lines.forEach((ln, i) => {
+      doc.setFont('helvetica', (boldFirst && i === 0) ? 'bold' : 'normal'); doc.setFontSize(i === lines.length - 1 ? 6.3 : 7);
+      const fit = doc.splitTextToSize(ln, Math.max(w - 6, 8))[0];
+      doc.text(fit, x + 4, ty); ty += 8.4;
+    });
+  }
+
+  // ----- Page 1..n : by professor, windows of WIN minutes -----
+  let y = header('Timeline per professore');
+  for (let a = T0; a < T1; a += WIN) {
+    const b = Math.min(a + WIN, T1), px = gridW / (b - a), LH = 52;
+    const need = 16 + profs.length * LH + 14;
+    if (y + need > PH - M) { doc.addPage(); y = header('Timeline per professore'); }
+    y = axis(y, a, b, px);
+    const top = y;
+    profs.forEach((p, i) => {
+      const pal = palOf(p);
+      doc.setFillColor(...pal.pdf); doc.rect(M, y, LW, LH, 'F');
+      doc.setTextColor(...pal.pdfLine); doc.setFont('helvetica', 'bold'); doc.setFontSize(10);
+      doc.text(p, M + 6, y + LH / 2 + 3);
+      doc.setDrawColor(225, 228, 240); doc.setLineWidth(0.4); doc.line(M, y + LH, PW - M, y + LH);
+      y += LH;
+    });
+    gridLines(top, y, a, b, px);
+    profs.forEach((p, i) => {
+      const pal = palOf(p), ry = top + i * LH;
+      appts.filter(ap => ap.prof === p && ap.end > a && ap.start < b).forEach(ap => {
+        const s = Math.max(ap.start, a), e = Math.min(ap.end, b);
+        const lines = [...ap.teams.map(t => tt(t)), xlFmt(ap.start) + ' - ' + xlFmt(ap.end)];
+        block(M + LW + (s - a) * px, ry + 4, (e - s) * px, LH - 8, pal, lines, true);
+      });
+    });
+    y += 14;
+  }
+
+  // ----- by team -----
+  doc.addPage(); y = header('Timeline per squadra');
+  for (let a = T0; a < T1; a += WIN) {
+    const b = Math.min(a + WIN, T1), px = gridW / (b - a), LH = 33;
+    if (y + 16 + allTeams.length * LH + 14 > PH - M) { doc.addPage(); y = header('Timeline per squadra'); }
+    y = axis(y, a, b, px);
+    const top = y;
+    allTeams.forEach(t => {
+      doc.setFillColor(246, 247, 252); doc.rect(M, y, LW, LH, 'F');
+      doc.setTextColor(28, 31, 42); doc.setFont('helvetica', 'bold'); doc.setFontSize(8);
+      doc.text('TEAM ' + t, M + 6, y + 13);
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(107, 114, 128);
+      doc.text(topics[t] || '', M + 6, y + 23);
+      doc.setDrawColor(225, 228, 240); doc.setLineWidth(0.4); doc.line(M, y + LH, PW - M, y + LH);
+      y += LH;
+    });
+    gridLines(top, y, a, b, px);
+    allTeams.forEach((t, i) => {
+      const ry = top + i * LH;
+      const mine = appts.filter(ap => ap.teams.includes(t)).sort((p, q) => p.start - q.start);
+      mine.forEach((ap, k) => {
+        if (ap.end > a && ap.start < b) {
+          const s = Math.max(ap.start, a), e = Math.min(ap.end, b), pal = palOf(ap.prof);
+          const partners = ap.teams.filter(o => o !== t).map(o => 'T' + o);
+          block(M + LW + (s - a) * px, ry + 3, (e - s) * px, LH - 6, pal, [ap.prof, xlFmt(ap.start) + ' - ' + xlFmt(ap.end) + (partners.length ? ' +' + partners.join(',') : '')], true);
+        }
+        const nx = mine[k + 1];
+        if (nx) {
+          const gap = nx.start - ap.end, mid = (ap.end + nx.start) / 2;
+          if (mid > a && mid < b && gap >= 5) {
+            doc.setFont('helvetica', 'italic'); doc.setFontSize(6.5);
+            doc.setTextColor(...((minGap && gap < minGap) ? [180, 83, 9] : [138, 144, 166]));
+            doc.text(gap + ' min', M + LW + (mid - a) * px, ry + LH / 2 + 2, { align: 'center' });
+          }
+        }
+      });
+    });
+    y += 14;
+  }
+
+  // ----- table with all times -----
+  doc.addPage(); y = header('Schedule - tutti gli orari');
+  const cw = [60, 60]; const rest = PW - 2 * M - 120; profs.forEach(() => cw.push(rest / profs.length));
+  const drawHead = () => {
+    doc.setFillColor(...navy); doc.rect(M, y, PW - 2 * M, 18, 'F');
+    doc.setTextColor(255, 255, 255); doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
+    let x = M; ['Start time', 'End time', ...profs.map(p => 'Group (' + p + ')')].forEach((h, i) => { doc.text(h, x + 5, y + 12); x += cw[i]; });
+    y += 18;
+  };
+  drawHead();
+  schedule.forEach(row => {
+    const cellsTxt = profs.map(p => row.cells[p] ? row.cells[p].map(tt).join(' + ') : '');
+    const wrapped = cellsTxt.map((s, i) => doc.splitTextToSize(s, cw[2 + i] - 10));
+    const lines = Math.max(1, ...wrapped.map(w => w.length));
+    const rh = 8 + lines * 10;
+    if (y + rh > PH - M) { doc.addPage(); y = header('Schedule - tutti gli orari'); drawHead(); }
+    let x = M;
+    const vals = [row.start, row.end, ...cellsTxt];
+    vals.forEach((v, i) => {
+      if (i >= 2 && v) { const pal = palOf(profs[i - 2]); doc.setFillColor(...pal.pdf); doc.rect(x, y, cw[i], rh, 'F'); }
+      doc.setDrawColor(0, 0, 0); doc.setLineWidth(0.4); doc.rect(x, y, cw[i], rh);
+      doc.setTextColor(0, 0, 0); doc.setFont('helvetica', i === 0 ? 'bold' : 'normal'); doc.setFontSize(9);
+      if (i < 2) doc.text(String(v), x + 5, y + 12);
+      else wrapped[i - 2].forEach((ln, k) => doc.text(ln, x + 5, y + 12 + k * 10));
+      x += cw[i];
+    });
+    y += rh;
+  });
+  return doc;
+}
+
+function downloadPDF() {
+  if (!lastSchedule) { generate(); if (!lastSchedule) return; }
+  const J = (window.jspdf && window.jspdf.jsPDF) ? window.jspdf.jsPDF : null;
+  if (!J) { alert('Libreria PDF non caricata (serve internet la prima volta). Riprova.'); return; }
+  const ctx = exportCtx();
+  const doc = buildPdf(J, ctx);
+  doc.save(`review_schedule_${ctx.config.date}.pdf`);
 }
 
 function downloadCSV() {
