@@ -312,7 +312,7 @@
 <div class="actions">
   <button class="primary" onclick="generate()">Generate schedule</button>
   <button onclick="downloadExcel()">Download as Excel</button>
-  <button onclick="downloadPDF()">Download as PDF</button>
+  <button onclick="downloadPDF()">Download PDF (per professor + per team)</button>
   <button onclick="downloadCSV()">Download as CSV</button>
   <button onclick="saveToHistory()">Save this schedule's pairings to history</button>
 </div>
@@ -1597,7 +1597,8 @@ async function downloadExcel() {
 }
 
 /* ---------------- PDF ---------------- */
-function buildPdf(JsPDF, ctx, docIn) {
+function buildPdf(JsPDF, ctx, docIn, mode) {
+  mode = mode || 'prof';
   const { config, schedule, profs, appts, topics, weekday, minGap } = ctx;
   const doc = docIn || new JsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
   if (docIn) doc.addPage();
@@ -1665,7 +1666,9 @@ function buildPdf(JsPDF, ctx, docIn) {
   }
 
   // ----- Page 1..n : by professor, windows of WIN minutes -----
-  let y = header('Timeline per professore');
+  let y = 0;
+  if (mode === 'prof') {
+  y = header('Timeline per professore');
   for (let a = T0; a < T1; a += WIN) {
     const b = Math.min(a + WIN, T1), px = gridW / (b - a), LH = 52;
     const need = 16 + profs.length * LH + 14;
@@ -1692,8 +1695,10 @@ function buildPdf(JsPDF, ctx, docIn) {
     y += 14;
   }
 
+  }
   // ----- by team -----
-  doc.addPage(); y = header('Timeline per squadra');
+  if (mode === 'team') {
+  y = header('Timeline per squadra');
   for (let a = T0; a < T1; a += WIN) {
     const b = Math.min(a + WIN, T1), px = gridW / (b - a), LH = 33;
     if (y + 16 + allTeams.length * LH + 14 > PH - M) { doc.addPage(); y = header('Timeline per squadra'); }
@@ -1732,7 +1737,9 @@ function buildPdf(JsPDF, ctx, docIn) {
     y += 14;
   }
 
-  // ----- table with all times -----
+  }
+  return doc;
+  // ----- table with all times (not exported any more) -----
   doc.addPage(); y = header('Schedule - tutti gli orari');
   const cw = [60, 60]; const rest = PW - 2 * M - 120; profs.forEach(() => cw.push(rest / profs.length));
   const drawHead = () => {
@@ -1768,9 +1775,12 @@ function downloadPDF() {
   if (!allResults.length) { generate(); if (!allResults.length) return; }
   const J = (window.jspdf && window.jspdf.jsPDF) ? window.jspdf.jsPDF : null;
   if (!J) { alert('Libreria PDF non caricata (serve internet la prima volta). Riprova.'); return; }
-  let doc = null;
-  allResults.forEach(r => { doc = buildPdf(J, exportCtx(r.config, r.schedule), doc); });
-  doc.save(`review_schedule_${allResults[0].config.date}${allResults.length > 1 ? '_+' + (allResults.length - 1) + 'd' : ''}.pdf`);
+  const base = `review_schedule_${allResults[0].config.date}${allResults.length > 1 ? '_+' + (allResults.length - 1) + 'd' : ''}`;
+  [['prof', 'per_professor'], ['team', 'per_team']].forEach(([mode, suffix], k) => {
+    let doc = null;
+    allResults.forEach(r => { doc = buildPdf(J, exportCtx(r.config, r.schedule), doc, mode); });
+    setTimeout(() => doc.save(`${base}_${suffix}.pdf`), k * 400);
+  });
 }
 
 function downloadCSV() {
