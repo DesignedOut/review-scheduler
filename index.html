@@ -1205,8 +1205,8 @@ function renderTimeline(el, appts, profs, topics, opts) {
         const tt = a.teams.map(t => `TEAM ${t}${topics[t] ? ' (' + topics[t] + ')' : ''}`).join(' + ');
         rows += `<div class="tl-block" data-teams="${a.teams.join(',')}" title="${tlEsc(p)} ${tlFmt(a.start)}–${tlFmt(a.end)} · ${tlEsc(tt)}"
           style="left:${x(a.start)}px;width:${(a.end - a.start) * PPM - 2}px;top:7px;height:${H - 14}px;background:${c.bg};border-color:${c.c}">
-          <b>${a.teams.map(t => 'T' + tlEsc(t)).join(' + ')}</b>
-          <span>${a.teams.map(t => tlEsc(topics[t] || '')).filter(Boolean).join(' · ')}</span>
+          <b>${(opts.nAll > 1 && a.teams.length >= opts.nAll) ? 'ALL GROUPS' : a.teams.map(t => 'T' + tlEsc(t)).join(' + ')}</b>
+          <span>${(opts.nAll > 1 && a.teams.length >= opts.nAll) ? '' : a.teams.map(t => tlEsc(topics[t] || '')).filter(Boolean).join(' · ')}</span>
           ${(a.end - a.start) >= 25 ? `<span class="tm">${tlFmt(a.start)}–${tlFmt(a.end)}</span>` : `<span class="tm">${tlFmt(a.start)}</span>`}</div>`;
       });
       rows += '</div>';
@@ -1219,7 +1219,7 @@ function renderTimeline(el, appts, profs, topics, opts) {
         <div class="tl-label" style="width:${LW}px;height:${H}px"><div>TEAM ${tlEsc(t)}<small>${tlEsc(topics[t] || '')}</small></div></div>`;
       mine.forEach((a, i) => {
         const c = col(a.prof);
-        const partners = a.teams.filter(o => o !== t).map(o => 'T' + o);
+        const partners = (opts.nAll > 1 && a.teams.length >= opts.nAll) ? [] : a.teams.filter(o => o !== t).map(o => 'T' + o);
         rows += `<div class="tl-block" data-teams="${tlEsc(t)}" title="${tlEsc(a.prof)} ${tlFmt(a.start)}–${tlFmt(a.end)}${partners.length ? ' · con ' + partners.join(', ') : ''}"
           style="left:${x(a.start)}px;width:${(a.end - a.start) * PPM - 2}px;top:5px;height:${H - 10}px;background:${c.bg};border-color:${c.c}">
           <b style="color:${c.c}">${tlEsc(a.prof)}</b>
@@ -1370,7 +1370,7 @@ function generate() {
     }));
     const tlTopics = {};
     config.teams.forEach(t => { if (teamRoster[t] && teamRoster[t].topic) tlTopics[t] = teamRoster[t].topic; });
-    renderTimeline(tlEl, tlAppts, config.tracks.map(t => t.name), tlTopics, { minGap: config.minGapUsed || 0 });
+    renderTimeline(tlEl, tlAppts, config.tracks.map(t => t.name), tlTopics, { minGap: config.minGapUsed || 0, nAll: config.teams.length });
 
     const profNames = config.tracks.map(t => t.name);
     let html = `<div id="resultWrap"><h2>Schedule — ${config.date}${config.room ? ' · ' + config.room : ''}</h2><table><thead><tr><th>Start</th><th>End</th>`;
@@ -1380,7 +1380,7 @@ function generate() {
       html += `<tr><td>${row.start}</td><td>${row.end}</td>`;
       profNames.forEach(p => {
         const item = row.cells[p];
-        html += `<td>${item ? item.map(formatTeamWithTopic).join(' + ') : ''}</td>`;
+        html += `<td>${item ? teamsText(item, config.teams.length, formatTeamWithTopic) : ''}</td>`;
       });
       html += '</tr>';
     });
@@ -1402,7 +1402,7 @@ function buildAOA(config, schedule) {
   aoa.push(config.room ? ['Room', config.room] : []);
   aoa.push(['Start time', 'End time', ...profNames.map(p => `Group (${p})`)]);
   schedule.forEach(row => {
-    const cells = profNames.map(p => row.cells[p] ? row.cells[p].map(formatTeamWithTopic).join(' + ') : '');
+    const cells = profNames.map(p => row.cells[p] ? teamsText(row.cells[p], config.teams.length, formatTeamWithTopic) : '');
     aoa.push([row.start, row.end, ...cells]);
   });
   return aoa;
@@ -1453,6 +1453,8 @@ function exportCtx(config, schedule) {
   if (!isNaN(d)) weekday = d.toLocaleDateString('en-US', { weekday: 'long' }).toUpperCase();
   return { config, schedule, profs, appts, topics, weekday, minGap: config.minGapUsed || 0 };
 }
+function isAllGroups(teams, n) { return n > 1 && teams.length >= n; }
+function teamsText(teams, n, fmt) { return isAllGroups(teams, n) ? 'ALL GROUPS' : teams.map(fmt).join(' + '); }
 function xlTeamText(t, topics) { return 'TEAM ' + t + (topics[t] ? ' (' + topics[t] + ')' : ''); }
 function xlFmt(m) { return String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0'); }
 
@@ -1495,7 +1497,7 @@ function buildExcelWorkbook(ExcelJS, ctx, wbIn, sfx) {
     profs.forEach((p, i) => {
       const item = row.cells[p];
       const cell = ws.getCell(R, 3 + i);
-      cell.value = item ? item.map(t => xlTeamText(t, topics)).join(' + ') : '';
+      cell.value = item ? teamsText(item, config.teams.length, t => xlTeamText(t, topics)) : '';
       plain(cell);
       if (item) { const pal = profPal(p, i); cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: pal.fill } }; cell.font = { name: 'Manrope', size: 12, color: { argb: pal.font } }; const ln = { style: 'medium', color: { argb: pal.line } }; cell.border = { top: ln, bottom: ln, left: ln, right: ln }; }
     });
@@ -1564,12 +1566,12 @@ function buildExcelWorkbook(ExcelJS, ctx, wbIn, sfx) {
   }
 
   const byProf = [];
-  profs.forEach(p => appts.filter(a => a.prof === p).sort((x, y) => x.start - y.start).forEach(a => byProf.push({ a: p, b: a.teams.map(t => xlTeamText(t, topics)).join(' + '), start: a.start, end: a.end })));
+  profs.forEach(p => appts.filter(a => a.prof === p).sort((x, y) => x.start - y.start).forEach(a => byProf.push({ a: p, b: teamsText(a.teams, config.teams.length, t => xlTeamText(t, topics)), start: a.start, end: a.end })));
   ganttSheet('Timeline', ['Professor', 'Team(s)', 'Start', 'End', 'Min'], byProf, (R) => ({ formula: `ROUND((D${R}-C${R})*1440,0)` }));
 
   const byTeam = [];
   allTeams.forEach(t => appts.filter(a => a.teams.includes(t)).sort((x, y) => x.start - y.start).forEach(a => {
-    const partners = a.teams.filter(o => o !== t).map(o => 'T' + o);
+    const partners = isAllGroups(a.teams, config.teams.length) ? [] : a.teams.filter(o => o !== t).map(o => 'T' + o);
     byTeam.push({ a: xlTeamText(t, topics), b: a.prof, start: a.start, end: a.end, team: t, partners });
   }));
   // Per squadra: A=team, B=professor ; E = gap (min) from previous row of the same team
@@ -1613,7 +1615,12 @@ function buildPdf(JsPDF, ctx, docIn, mode) {
   const allMin = appts.flatMap(a => [a.start, a.end]);
   const T0 = Math.floor(Math.min(...allMin) / 30) * 30, T1 = Math.ceil(Math.max(...allMin) / 30) * 30;
   const allTeams = [...new Set(appts.flatMap(a => a.teams))].sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }));
-  const WIN = 210; // minutes per timeline panel
+  const bs = config.brk ? timeToMin(config.brk.start) : null, be = config.brk ? timeToMin(config.brk.end) : null;
+  let wins = (bs !== null && bs > T0 && be < T1 && bs < be) ? [[T0, Math.ceil(Math.min(bs, T1) / 15) * 15], [Math.floor(be / 15) * 15, T1]] : [[T0, T1]];
+  wins = wins.filter(([a, b]) => appts.some(ap => ap.end > a && ap.start < b));
+  const maxLen = Math.max(...wins.map(([a, b]) => b - a));
+  const availH = PH - M - (M + 48);
+  const lhFor = (rows, maxLH, minLH) => Math.max(minLH, Math.min(maxLH, (availH - wins.length * 32) / (wins.length * rows)));
   const gridW = PW - 2 * M - LW;
 
   function header(title) {
@@ -1669,8 +1676,8 @@ function buildPdf(JsPDF, ctx, docIn, mode) {
   let y = 0;
   if (mode === 'prof') {
   y = header('Timeline per professore');
-  for (let a = T0; a < T1; a += WIN) {
-    const b = Math.min(a + WIN, T1), px = gridW / (b - a), LH = 52;
+  for (const [a, b] of wins) {
+    const px = gridW / maxLen, LH = lhFor(profs.length, 52, 30);
     const need = 16 + profs.length * LH + 14;
     if (y + need > PH - M) { doc.addPage(); y = header('Timeline per professore'); }
     y = axis(y, a, b, px);
@@ -1688,7 +1695,7 @@ function buildPdf(JsPDF, ctx, docIn, mode) {
       const pal = palOf(p), ry = top + i * LH;
       appts.filter(ap => ap.prof === p && ap.end > a && ap.start < b).forEach(ap => {
         const s = Math.max(ap.start, a), e = Math.min(ap.end, b);
-        const lines = [...ap.teams.map(t => tt(t)), xlFmt(ap.start) + ' - ' + xlFmt(ap.end)];
+        const lines = [...(isAllGroups(ap.teams, config.teams.length) ? ['ALL GROUPS'] : ap.teams.map(t => tt(t))), xlFmt(ap.start) + ' - ' + xlFmt(ap.end)];
         block(M + LW + (s - a) * px, ry + 4, (e - s) * px, LH - 8, pal, lines, true);
       });
     });
@@ -1699,8 +1706,8 @@ function buildPdf(JsPDF, ctx, docIn, mode) {
   // ----- by team -----
   if (mode === 'team') {
   y = header('Timeline per squadra');
-  for (let a = T0; a < T1; a += WIN) {
-    const b = Math.min(a + WIN, T1), px = gridW / (b - a), LH = 33;
+  for (const [a, b] of wins) {
+    const px = gridW / maxLen, LH = lhFor(allTeams.length, 33, 25);
     if (y + 16 + allTeams.length * LH + 14 > PH - M) { doc.addPage(); y = header('Timeline per squadra'); }
     y = axis(y, a, b, px);
     const top = y;
@@ -1720,7 +1727,7 @@ function buildPdf(JsPDF, ctx, docIn, mode) {
       mine.forEach((ap, k) => {
         if (ap.end > a && ap.start < b) {
           const s = Math.max(ap.start, a), e = Math.min(ap.end, b), pal = palOf(ap.prof);
-          const partners = ap.teams.filter(o => o !== t).map(o => 'T' + o);
+          const partners = isAllGroups(ap.teams, config.teams.length) ? [] : ap.teams.filter(o => o !== t).map(o => 'T' + o);
           block(M + LW + (s - a) * px, ry + 3, (e - s) * px, LH - 6, pal, [ap.prof, xlFmt(ap.start) + ' - ' + xlFmt(ap.end) + (partners.length ? ' +' + partners.join(',') : '')], true);
         }
         const nx = mine[k + 1];
