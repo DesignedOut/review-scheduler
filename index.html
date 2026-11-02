@@ -1044,7 +1044,7 @@ function buildComplianceReport(config, schedule) {
       item.forEach(t => {
         teamsThisSlot.push(t);
         const key = t + '|' + prof;
-        if (seenPairs.has(key)) dupTrackIssues.push(`squadra ${t} / ${prof}`);
+        if (seenPairs.has(key)) dupTrackIssues.push(`team ${t} / ${prof}`);
         seenPairs.add(key);
         teamAppointments[t].push({ start: timeToMin(row.start), end: timeToMin(row.end), prof });
       });
@@ -1056,16 +1056,16 @@ function buildComplianceReport(config, schedule) {
   checks.push({
     ok: missingCoverage.length === 0 && dupTrackIssues.length === 0,
     text: trackNames.length > 1
-      ? `Ogni squadra ha visto tutti e ${trackNames.length} i professori, esattamente una volta ciascuno`
-      : 'Ogni squadra è stata assegnata esattamente una volta',
+      ? `Every team saw all ${trackNames.length} professor(s), exactly once each`
+      : 'Every team was assigned exactly once',
     detail: missingCoverage.length ? `Copertura incompleta: ${missingCoverage.join(', ')}` :
             dupTrackIssues.length ? `Visto più volte: ${dupTrackIssues.join(', ')}` : null
   });
 
   checks.push({
     ok: doubleBookIssues.length === 0,
-    text: 'Nessuna squadra impegnata con due professori nello stesso slot orario',
-    detail: doubleBookIssues.length ? `Slot in conflitto: ${doubleBookIssues.join(', ')}` : null
+    text: 'No team is booked with two professors at the same time',
+    detail: doubleBookIssues.length ? `Conflicting slots: ${doubleBookIssues.join(', ')}` : null
   });
 
   const userGap = config.minGap;
@@ -1076,14 +1076,14 @@ function buildComplianceReport(config, schedule) {
     const sorted = appts.slice().sort((a, b) => a.start - b.start);
     for (let i = 1; i < sorted.length; i++) {
       const gap = sorted[i].start - sorted[i - 1].end;
-      if (gap < minGapMinutes) gapIssues.push(`squadra ${t}: solo ${gap} min tra ${sorted[i-1].prof} e ${sorted[i].prof}`);
+      if (gap < minGapMinutes) gapIssues.push(`team ${t}: only ${gap} min between ${sorted[i-1].prof} and ${sorted[i].prof}`);
     }
   });
   checks.push({
     ok: gapIssues.length === 0,
     text: trackNames.length > 1
-      ? `Intervallo minimo di ${minGapMinutes} minuti rispettato tra gli appuntamenti di ogni squadra`
-      : 'Nessun vincolo di intervallo da verificare (un solo professore in agenda)',
+      ? `Minimum gap of ${minGapMinutes} minutes respected between each team's appointments`
+      : 'No gap constraint to check (only one professor scheduled)',
     detail: gapIssues.length ? gapIssues.join('; ') : null
   });
 
@@ -1100,15 +1100,15 @@ function buildComplianceReport(config, schedule) {
       const lateIdxs = order.filter(o => pd[o.t] === 'late').map(o => o.idx);
       const otherIdxs = order.filter(o => pd[o.t] !== 'early' && pd[o.t] !== 'late').map(o => o.idx);
       if (earlyIdxs.length && otherIdxs.length && Math.max(...earlyIdxs) > Math.min(...otherIdxs)) {
-        priorityOk = false; detailParts.push(`${prof}: una squadra "prefer early" non è tra le prime`);
+        priorityOk = false; detailParts.push(`${prof}: a "prefer early" team is not among the first`);
       }
       if (lateIdxs.length && otherIdxs.length && Math.min(...lateIdxs) < Math.max(...otherIdxs)) {
-        priorityOk = false; detailParts.push(`${prof}: una squadra "prefer late" non è tra le ultime`);
+        priorityOk = false; detailParts.push(`${prof}: a "prefer late" team is not among the last`);
       }
     });
     checks.push({
       ok: priorityOk,
-      text: `Preferenze di priorità rispettate (${earlyTeams.length} squadra/e in anticipo, ${lateTeams.length} in coda)`,
+      text: `Priority preferences respected (${earlyTeams.length} early team(s), ${lateTeams.length} late)`,
       detail: detailParts.length ? detailParts.join('; ') : null
     });
   }
@@ -1126,13 +1126,13 @@ function renderComplianceReport(checks, repeatPairings, historyTracked) {
   const repeatLine = repeatPairings > 0
     ? `<div style="display:flex; gap:8px; align-items:flex-start;">
         <span style="color:#c9891f; font-weight:700;">!</span>
-        <span>${repeatPairings} abbinamento/i ripete/ono una combinazione già vista nello storico — inevitabile con i vincoli attuali.</span>
+        <span>${repeatPairings} pairing(s) repeat a combination already seen in the history — unavoidable with the current constraints.</span>
       </div>`
     : historyTracked
-      ? `<div style="display:flex; gap:8px; align-items:flex-start;"><span style="color:var(--teal); font-weight:700;">✓</span><span>Nessun abbinamento ripetuto rispetto allo storico caricato.</span></div>`
+      ? `<div style="display:flex; gap:8px; align-items:flex-start;"><span style="color:var(--teal); font-weight:700;">✓</span><span>No pairing repeats the loaded history.</span></div>`
       : '';
   const cls = allOk ? 'ok' : 'warn';
-  return `<div class="${cls}"><strong>${allOk ? 'Schedule generato rispettando tutti i requisiti:' : 'Attenzione — alcuni requisiti non sono soddisfatti:'}</strong><div style="margin-top:8px">${items}${repeatLine}</div></div>`;
+  return `<div class="${cls}"><strong>${allOk ? 'Schedule generated respecting all requirements:' : 'Warning — some requirements are not met:'}</strong><div style="margin-top:8px">${items}${repeatLine}</div></div>`;
 }
 
 function collectConfig(d) {
@@ -1200,7 +1200,7 @@ function renderTimeline(el, appts, profs, topics, opts) {
       const c = col(p);
       const mine = appts.filter(a => a.prof === p);
       rows += `<div class="tl-row" style="height:${H}px;width:${LW + W}px">${grid}
-        <div class="tl-label" style="width:${LW}px;height:${H}px;color:${c.c}">${tlEsc(p)}</div>`;
+        <div class="tl-label" style="width:${LW}px;height:${H}px;color:${c.c}"><div>${tlEsc(p)}${(opts.capLabels || {})[p] ? '<small>' + tlEsc(opts.capLabels[p]) + '</small>' : ''}</div></div>`;
       mine.forEach(a => {
         const tt = a.teams.map(t => `TEAM ${t}${topics[t] ? ' (' + topics[t] + ')' : ''}`).join(' + ');
         rows += `<div class="tl-block" data-teams="${a.teams.join(',')}" title="${tlEsc(p)} ${tlFmt(a.start)}–${tlFmt(a.end)} · ${tlEsc(tt)}"
@@ -1240,13 +1240,13 @@ function renderTimeline(el, appts, profs, topics, opts) {
   const chips = allTeams.map(t => `<button class="tl-chip ${st.sel.has(String(t)) ? 'on' : ''}" data-chip="${tlEsc(t)}">T${tlEsc(t)}</button>`).join('');
   el.innerHTML = `
     <div class="tl-head">
-      <div class="tl-seg"><button data-mode="prof" class="${st.mode === 'prof' ? 'on' : ''}">Per professore</button><button data-mode="team" class="${st.mode === 'team' ? 'on' : ''}">Per squadra</button></div>
+      <div class="tl-seg"><button data-mode="prof" class="${st.mode === 'prof' ? 'on' : ''}">By professor</button><button data-mode="team" class="${st.mode === 'team' ? 'on' : ''}">By team</button></div>
       <div class="tl-legend">${legend}</div>
     </div>
-    <div class="tl-chips" style="margin-bottom:10px"><span style="font-size:12px;color:#6b7280">Evidenzia squadra:</span>${chips}</div>
+    <div class="tl-chips" style="margin-bottom:10px"><span style="font-size:12px;color:#6b7280">Highlight team:</span>${chips}</div>
     <div class="tl-scroll"><div class="tl-inner" style="width:${LW + W}px">
       <div class="tl-axis" style="width:${LW + W}px">${axis}</div>${rows}</div></div>
-    <div class="tl-note">${st.mode === 'prof' ? 'Ogni corsia è un professore: i blocchi alla stessa altezza orizzontale sono in parallelo. Passa il mouse su un blocco per seguire la squadra negli altri professori.' : 'Ogni riga è una squadra; il numero tra i blocchi è l\'intervallo in minuti (rosso = sovrapposizione' + (minGap ? ', arancione = sotto i ' + minGap + ' min' : '') + ').'}</div>`;
+    <div class="tl-note">${st.mode === 'prof' ? 'Each lane is a professor: blocks at the same horizontal position run in parallel. Hover a block to follow that team across the other professors.' : 'Each row is a team; the number between blocks is the gap in minutes (red = overlap' + (minGap ? ', orange = under ' + minGap + ' min' : '') + ').'}</div>`;
 
   const blocks = el.querySelectorAll('.tl-block');
   const apply = (set) => {
@@ -1354,8 +1354,8 @@ function generate() {
     outEl.appendChild(sec);
     const checks = buildComplianceReport(config, schedule);
     let msgs = renderComplianceReport(checks, meta.repeatPairings, Object.keys(pairHistory).length > 0 || i > 0);
-    if (meta.gapReduced) msgs += `<div class="warn">Con l'intervallo automatico (${meta.requestedGap} min) non c'era spazio nella giornata: ho ridotto l'intervallo minimo tra gli appuntamenti di ogni squadra a <strong>${meta.minGapMinutes} min</strong>, il massimo che permette di far vedere a ogni squadra tutti i professori. Se vuoi più margine, fai partire i professori a orari diversi o allunga la giornata.</div>`;
-    if (meta.priorityRelaxed) msgs += `<div class="warn">Le priorità early/late non erano compatibili con gli orari dei professori: sono state rilassate per trovare uno schedule valido.</div>`;
+    if (meta.gapReduced) msgs += `<div class="warn">With the automatic gap (${meta.requestedGap} min) the day did not fit: I reduced the minimum gap between each team's appointments to <strong>${meta.minGapMinutes} min</strong>, the most that lets every team see all professors. For more margin, start the professors at different times or extend the day.</div>`;
+    if (meta.priorityRelaxed) msgs += `<div class="warn">The early/late priorities were not compatible with the professors' times: they were relaxed to find a valid schedule.</div>`;
     const head = document.createElement('div');
     head.innerHTML = (multi ? `<h2 style="margin-top:24px">Day ${i + 1} — ${config.date}</h2>` : '') + msgs;
     sec.appendChild(head);
@@ -1370,11 +1370,11 @@ function generate() {
     }));
     const tlTopics = {};
     config.teams.forEach(t => { if (teamRoster[t] && teamRoster[t].topic) tlTopics[t] = teamRoster[t].topic; });
-    renderTimeline(tlEl, tlAppts, config.tracks.map(t => t.name), tlTopics, { minGap: config.minGapUsed || 0, nAll: config.teams.length });
+    renderTimeline(tlEl, tlAppts, config.tracks.map(t => t.name), tlTopics, { minGap: config.minGapUsed || 0, nAll: config.teams.length, capLabels: Object.fromEntries(config.tracks.map(t => [t.name, groupSizeLabel(t.name, schedule, config.teams.length)])) });
 
     const profNames = config.tracks.map(t => t.name);
     let html = `<div id="resultWrap"><h2>Schedule — ${config.date}${config.room ? ' · ' + config.room : ''}</h2><table><thead><tr><th>Start</th><th>End</th>`;
-    profNames.forEach(p => { html += `<th>${p}</th>`; });
+    profNames.forEach(p => { html += `<th>${p}<br><small style="font-weight:500">${groupSizeLabel(p, schedule, config.teams.length)}</small></th>`; });
     html += '</tr></thead><tbody>';
     schedule.forEach(row => {
       html += `<tr><td>${row.start}</td><td>${row.end}</td>`;
@@ -1399,7 +1399,7 @@ function buildAOA(config, schedule) {
   const aoa = [];
   aoa.push(['Date', config.date]);
   aoa.push(['Professor(s)', profNames.join(' / ')]);
-  aoa.push(config.room ? ['Room', config.room] : []);
+  aoa.push([config.room ? 'Room' : '', config.room || '', ...profNames.map(p => groupSizeLabel(p, schedule, config.teams.length))]);
   aoa.push(['Start time', 'End time', ...profNames.map(p => `Group (${p})`)]);
   schedule.forEach(row => {
     const cells = profNames.map(p => row.cells[p] ? teamsText(row.cells[p], config.teams.length, formatTeamWithTopic) : '');
@@ -1453,6 +1453,15 @@ function exportCtx(config, schedule) {
   if (!isNaN(d)) weekday = d.toLocaleDateString('en-US', { weekday: 'long' }).toUpperCase();
   return { config, schedule, profs, appts, topics, weekday, minGap: config.minGapUsed || 0 };
 }
+function groupSizeLabel(prof, schedule, n) {
+  const sizes = [...new Set(schedule.map(r => r.cells[prof]).filter(Boolean).map(c => c.length))].sort((a, b) => a - b);
+  if (!sizes.length) return '';
+  if (sizes.length === 1) {
+    if (n > 1 && sizes[0] >= n) return 'All groups together';
+    return sizes[0] + (sizes[0] === 1 ? ' group at a time' : ' groups at a time');
+  }
+  return sizes.join(' or ') + ' groups at a time';
+}
 function isAllGroups(teams, n) { return n > 1 && teams.length >= n; }
 function teamsText(teams, n, fmt) { return isAllGroups(teams, n) ? 'ALL GROUPS' : teams.map(fmt).join(' + '); }
 function xlTeamText(t, topics) { return 'TEAM ' + t + (topics[t] ? ' (' + topics[t] + ')' : ''); }
@@ -1481,6 +1490,7 @@ function buildExcelWorkbook(ExcelJS, ctx, wbIn, sfx) {
   const ws = wb.addWorksheet('Review' + sfx);
   ws.getColumn(1).width = 16; ws.getColumn(2).width = 16;
   profs.forEach((p, i) => ws.getColumn(3 + i).width = 36);
+  profs.forEach((p, i) => { const c = ws.getCell(3, 3 + i); c.value = groupSizeLabel(p, schedule, config.teams.length); c.font = { name: 'Manrope', size: 10, italic: true, color: { argb: 'FF6B7280' } }; });
   if (config.room) { ws.getCell(3, 1).value = 'Room'; navyCell(ws.getCell(3, 1)); ws.getCell(3, 2).value = config.room; plain(ws.getCell(3, 2)); }
   ws.getCell(1, 1).value = 'Date'; navyCell(ws.getCell(1, 1));
   ws.getCell(1, 2).value = config.date; plain(ws.getCell(1, 2));
@@ -1524,7 +1534,7 @@ function buildExcelWorkbook(ExcelJS, ctx, wbIn, sfx) {
     g.getCell(1, 2).value = config.date + (weekday ? '   ' + weekday : ''); plain(g.getCell(1, 2));
     g.getCell(2, 1).value = 'Professor(s)'; navyCell(g.getCell(2, 1));
     g.getCell(2, 2).value = profs.join(' / ') + (config.room ? '   |   Room: ' + config.room : ''); plain(g.getCell(2, 2));
-    g.getCell(3, 1).value = 'Modifica Start/End (o i team): le barre si spostano da sole.'; g.getCell(3, 1).font = { name: 'Manrope', size: 9, italic: true, color: { argb: 'FF6B7280' } };
+    g.getCell(3, 1).value = 'Edit Start/End (or the teams): the bars move by themselves.'; g.getCell(3, 1).font = { name: 'Manrope', size: 9, italic: true, color: { argb: 'FF6B7280' } };
     // header row 4 : labels + one cell per 5 min holding the real time value (rotated)
     g.getRow(4).height = 40;
     heads.forEach((h, i) => { const c = g.getCell(4, 1 + i); c.value = h; navyCell(c); });
@@ -1575,7 +1585,7 @@ function buildExcelWorkbook(ExcelJS, ctx, wbIn, sfx) {
     byTeam.push({ a: xlTeamText(t, topics), b: a.prof, start: a.start, end: a.end, team: t, partners });
   }));
   // Per squadra: A=team, B=professor ; E = gap (min) from previous row of the same team
-  const gT = ganttSheet('Per squadra', ['Team', 'Professor', 'Start', 'End', 'Gap (min)'], byTeam, (R) => ({ formula: `IF(A${R}=A${R - 1},ROUND((C${R}-D${R - 1})*1440,0),"")` }));
+  const gT = ganttSheet('By team', ['Team', 'Professor', 'Start', 'End', 'Gap (min)'], byTeam, (R) => ({ formula: `IF(A${R}=A${R - 1},ROUND((C${R}-D${R - 1})*1440,0),"")` }));
   const lastT = 4 + byTeam.length;
   gT.addConditionalFormatting({ ref: `E5:E${lastT}`, rules: [
     { type: 'expression', priority: 40, formulae: ['AND(ISNUMBER($E5),$E5<0)'], style: { fill: { type: 'pattern', pattern: 'solid', bgColor: { argb: 'FFFECACA' } }, font: { bold: true, color: { argb: 'FFB91C1C' } } } },
@@ -1672,82 +1682,95 @@ function buildPdf(JsPDF, ctx, docIn, mode) {
     });
   }
 
-  // ----- Page 1..n : by professor, windows of WIN minutes -----
-  let y = 0;
-  if (mode === 'prof') {
-  y = header('Timeline per professore');
-  for (const [a, b] of wins) {
-    const px = gridW / maxLen, LH = lhFor(profs.length, 52, 30);
-    const need = 16 + profs.length * LH + 14;
-    if (y + need > PH - M) { doc.addPage(); y = header('Timeline per professore'); }
-    y = axis(y, a, b, px);
-    const top = y;
-    profs.forEach((p, i) => {
-      const pal = palOf(p);
-      doc.setFillColor(...pal.pdf); doc.rect(M, y, LW, LH, 'F');
-      doc.setTextColor(...pal.pdfTxt); doc.setFont('Manrope', 'bold'); doc.setFontSize(10);
-      doc.text(p, M + 6, y + LH / 2 + 3);
-      doc.setDrawColor(225, 228, 240); doc.setLineWidth(0.4); doc.line(M, y + LH, PW - M, y + LH);
-      y += LH;
+  // ----- vertical layout: times in the first column, professors / teams in the header row -----
+  function vertical(title, cols, blocksOf) {
+    const y0 = header(title);
+    const TW = 46, HH = 26, BAND = 16;
+    const colW = (PW - 2 * M - TW) / cols.length;
+    const total = wins.reduce((s, [a, b]) => s + (b - a), 0);
+    const pxv = (PH - M - 6 - y0 - HH - (wins.length - 1) * BAND) / total;
+    // header row
+    doc.setFillColor(...navy); doc.rect(M, y0, TW, HH, 'F');
+    doc.setTextColor(255, 255, 255); doc.setFont('Manrope', 'bold'); doc.setFontSize(8); doc.text('Time', M + TW / 2, y0 + 16, { align: 'center' });
+    cols.forEach((c, i) => {
+      const x = M + TW + i * colW;
+      doc.setFillColor(...(c.pal ? c.pal.pdf : navy)); doc.setDrawColor(...(c.pal ? c.pal.pdfLine : navy)); doc.setLineWidth(1);
+      doc.rect(x, y0, colW, HH, 'FD');
+      doc.setTextColor(...(c.pal ? c.pal.pdfTxt : [255, 255, 255])); doc.setFont('Manrope', 'bold'); doc.setFontSize(9);
+      doc.text(c.label, x + colW / 2, y0 + (c.sub ? 11 : 16), { align: 'center' });
+      if (c.sub) { doc.setFont('Manrope', 'normal'); doc.setFontSize(6.5); doc.text(c.sub, x + colW / 2, y0 + 21, { align: 'center' }); }
     });
-    gridLines(top, y, a, b, px);
-    profs.forEach((p, i) => {
-      const pal = palOf(p), ry = top + i * LH;
-      appts.filter(ap => ap.prof === p && ap.end > a && ap.start < b).forEach(ap => {
-        const s = Math.max(ap.start, a), e = Math.min(ap.end, b);
-        const lines = [...(isAllGroups(ap.teams, config.teams.length) ? ['ALL GROUPS'] : ap.teams.map(t => tt(t))), xlFmt(ap.start) + ' - ' + xlFmt(ap.end)];
-        block(M + LW + (s - a) * px, ry + 4, (e - s) * px, LH - 8, pal, lines, true);
-      });
+    let yy = y0 + HH;
+    const segTop = [];
+    wins.forEach(([a, b], wi) => {
+      segTop.push(yy);
+      const hgt = (b - a) * pxv;
+      // time column + grid
+      doc.setFillColor(246, 247, 252); doc.rect(M, yy, TW, hgt, 'F');
+      for (let m = a; m <= b; m += 15) {
+        const gy = yy + (m - a) * pxv;
+        doc.setDrawColor(m % 30 === 0 ? 170 : 220, m % 30 === 0 ? 176 : 223, m % 30 === 0 ? 200 : 235); doc.setLineWidth(0.3);
+        doc.line(M, gy, PW - M, gy);
+        if (m < b) { doc.setTextColor(0, 32, 96); doc.setFont('Manrope', m % 30 === 0 ? 'bold' : 'normal'); doc.setFontSize(7.5);
+          doc.text(xlFmt(m), M + TW / 2, gy + Math.min(15, b - m) * pxv / 2 + 2.6, { align: 'center' }); }
+      }
+      for (let i = 0; i <= cols.length; i++) { const x = M + TW + i * colW; doc.setDrawColor(200, 204, 222); doc.setLineWidth(0.4); doc.line(x, yy, x, yy + hgt); }
+      yy += hgt;
+      if (wi < wins.length - 1) {
+        doc.setFillColor(235, 237, 245); doc.rect(M, yy, PW - 2 * M, BAND, 'F');
+        doc.setTextColor(107, 114, 128); doc.setFont('Manrope', 'normal'); doc.setFontSize(7);
+        doc.text('Break ' + xlFmt(b) + ' - ' + xlFmt(wins[wi + 1][0]), PW / 2, yy + 11, { align: 'center' });
+        yy += BAND;
+      }
     });
-    y += 14;
-  }
-
-  }
-  // ----- by team -----
-  if (mode === 'team') {
-  y = header('Timeline per squadra');
-  for (const [a, b] of wins) {
-    const px = gridW / maxLen, LH = lhFor(allTeams.length, 33, 25);
-    if (y + 16 + allTeams.length * LH + 14 > PH - M) { doc.addPage(); y = header('Timeline per squadra'); }
-    y = axis(y, a, b, px);
-    const top = y;
-    allTeams.forEach(t => {
-      doc.setFillColor(246, 247, 252); doc.rect(M, y, LW, LH, 'F');
-      doc.setTextColor(28, 31, 42); doc.setFont('Manrope', 'bold'); doc.setFontSize(8);
-      doc.text('TEAM ' + t, M + 6, y + 13);
-      doc.setFont('Manrope', 'normal'); doc.setFontSize(7); doc.setTextColor(107, 114, 128);
-      doc.text(topics[t] || '', M + 6, y + 23);
-      doc.setDrawColor(225, 228, 240); doc.setLineWidth(0.4); doc.line(M, y + LH, PW - M, y + LH);
-      y += LH;
-    });
-    gridLines(top, y, a, b, px);
-    allTeams.forEach((t, i) => {
-      const ry = top + i * LH;
-      const mine = appts.filter(ap => ap.teams.includes(t)).sort((p, q) => p.start - q.start);
-      mine.forEach((ap, k) => {
-        if (ap.end > a && ap.start < b) {
-          const s = Math.max(ap.start, a), e = Math.min(ap.end, b), pal = palOf(ap.prof);
-          const partners = isAllGroups(ap.teams, config.teams.length) ? [] : ap.teams.filter(o => o !== t).map(o => 'T' + o);
-          block(M + LW + (s - a) * px, ry + 3, (e - s) * px, LH - 6, pal, [ap.prof, xlFmt(ap.start) + ' - ' + xlFmt(ap.end) + (partners.length ? ' +' + partners.join(',') : '')], true);
-        }
-        const nx = mine[k + 1];
-        if (nx) {
-          const gap = nx.start - ap.end, mid = (ap.end + nx.start) / 2;
-          if (mid > a && mid < b && gap >= 5) {
+    const yOf = m => { for (let i = 0; i < wins.length; i++) { const [a, b] = wins[i]; if (m >= a && m <= b) return segTop[i] + (m - a) * pxv; } return null; };
+    cols.forEach((c, ci) => {
+      const x = M + TW + ci * colW + 2, w = colW - 4;
+      const items = blocksOf(c);
+      items.forEach((it, k) => {
+        wins.forEach(([a, b], wi) => {
+          if (it.end <= a || it.start >= b) return;
+          const s = Math.max(it.start, a), e = Math.min(it.end, b);
+          const y1 = segTop[wi] + (s - a) * pxv, hh = (e - s) * pxv;
+          doc.setFillColor(...it.pal.pdf); doc.setDrawColor(...it.pal.pdfLine); doc.setLineWidth(1.4);
+          doc.roundedRect(x, y1 + 0.5, w, Math.max(hh - 1, 2), 2, 2, 'FD');
+          doc.setTextColor(...it.pal.pdfTxt);
+          const tm = xlFmt(it.start) + '-' + xlFmt(it.end);
+          if (hh >= 8 * (it.lines.length + 1) + 3) {
+            let ty = y1 + 9;
+            it.lines.forEach((ln, i) => { doc.setFont('Manrope', i === 0 ? 'bold' : 'normal'); doc.setFontSize(7.5); doc.text(doc.splitTextToSize(ln, w - 8)[0], x + 4, ty); ty += 8.6; });
+            doc.setFont('Manrope', 'normal'); doc.setFontSize(6.5); doc.text(tm, x + 4, ty);
+          } else {
+            doc.setFont('Manrope', 'bold'); doc.setFontSize(7);
+            const one = it.lines.join(' + ') + '  ' + tm;
+            doc.text(doc.splitTextToSize(one, w - 8)[0], x + 4, y1 + Math.min(hh / 2 + 2.5, 11));
+          }
+        });
+        const nx = items[k + 1];
+        if (nx && c.gaps) {
+          const gap = nx.start - it.end;
+          const ya = yOf(it.end), yb = yOf(nx.start);
+          if (ya !== null && yb !== null && gap >= 5 && gap <= 120 && yb - ya >= 9 && yb - ya <= gap * pxv + 1) {
             doc.setFont('Manrope', 'normal'); doc.setFontSize(6.5);
             doc.setTextColor(...((minGap && gap < minGap) ? [180, 83, 9] : [138, 144, 166]));
-            doc.text(gap + ' min', M + LW + (mid - a) * px, ry + LH / 2 + 2, { align: 'center' });
+            doc.text(gap + ' min', x + w / 2, (ya + yb) / 2 + 2, { align: 'center' });
           }
         }
       });
     });
-    y += 14;
   }
 
+  const nAllT = config.teams.length;
+  if (mode === 'prof') {
+    vertical('Timeline by professor', profs.map(p => ({ label: p, sub: groupSizeLabel(p, schedule, nAllT), pal: palOf(p) })),
+      c => appts.filter(ap => ap.prof === c.label).sort((p, q) => p.start - q.start).map(ap => ({ start: ap.start, end: ap.end, pal: palOf(ap.prof), lines: isAllGroups(ap.teams, nAllT) ? ['ALL GROUPS'] : ap.teams.map(t => 'TEAM ' + t) })));
+  } else {
+    vertical('Timeline by team', allTeams.map(t => ({ label: 'TEAM ' + t, sub: topics[t] || '', key: t, gaps: true })),
+      c => appts.filter(ap => ap.teams.includes(c.key)).sort((p, q) => p.start - q.start).map(ap => ({ start: ap.start, end: ap.end, pal: palOf(ap.prof), lines: [ap.prof] })));
   }
   return doc;
   // ----- table with all times (not exported any more) -----
-  doc.addPage(); y = header('Schedule - tutti gli orari');
+  doc.addPage(); y = header('Schedule - all times');
   const cw = [60, 60]; const rest = PW - 2 * M - 120; profs.forEach(() => cw.push(rest / profs.length));
   const drawHead = () => {
     doc.setFillColor(...navy); doc.rect(M, y, PW - 2 * M, 18, 'F');
@@ -1761,7 +1784,7 @@ function buildPdf(JsPDF, ctx, docIn, mode) {
     const wrapped = cellsTxt.map((s, i) => doc.splitTextToSize(s, cw[2 + i] - 10));
     const lines = Math.max(1, ...wrapped.map(w => w.length));
     const rh = 8 + lines * 10;
-    if (y + rh > PH - M) { doc.addPage(); y = header('Schedule - tutti gli orari'); drawHead(); }
+    if (y + rh > PH - M) { doc.addPage(); y = header('Schedule - all times'); drawHead(); }
     let x = M;
     const vals = [row.start, row.end, ...cellsTxt];
     vals.forEach((v, i) => {
@@ -1781,7 +1804,7 @@ function buildPdf(JsPDF, ctx, docIn, mode) {
 function downloadPDF() {
   if (!allResults.length) { generate(); if (!allResults.length) return; }
   const J = (window.jspdf && window.jspdf.jsPDF) ? window.jspdf.jsPDF : null;
-  if (!J) { alert('Libreria PDF non caricata (serve internet la prima volta). Riprova.'); return; }
+  if (!J) { alert('PDF library not loaded (internet is needed the first time). Try again.'); return; }
   const base = `review_schedule_${allResults[0].config.date}${allResults.length > 1 ? '_+' + (allResults.length - 1) + 'd' : ''}`;
   [['prof', 'per_professor'], ['team', 'per_team']].forEach(([mode, suffix], k) => {
     let doc = null;
