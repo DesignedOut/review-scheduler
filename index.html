@@ -779,54 +779,107 @@ function buildSchedule(config) {
     return [...processPart(earlyPart), ...processPart(normalPart), ...processPart(latePart)];
   }
 
-  const maxAttempts = 400;
-  let best = null;
-  let bestPenalty = Infinity;
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const perTrackGroups = {};
-    for (const tr of tracks) {
-      const seq = trackSequence(attempt);
-      const units = trackUnits[tr.name];
-      const groups = [];
-      let ptr = 0;
-      for (const u of units) {
-        groups.push({ start: u.start, end: u.end, teams: seq.slice(ptr, ptr + u.capacity) });
-        ptr += u.capacity;
-      }
-      perTrackGroups[tr.name] = groups;
-    }
+  // Real constraint search (backtracking): each track has a preferred order of teams
+  // (trackSequence); we walk all review slots chronologically and place teams in that
+  // preferred order, but whenever a team would clash with its own other appointments
+  // (overlap or less than the minimum gap) we skip to the next feasible one, and
+  // backtrack if we get stuck. This finds valid schedules for multi-professor days
+  // that blind random sampling practically never hits.
+  function solve(minGap, maxAttempts, modes) {
+    const unitList = [];
+    tracks.forEach((tr, ti) => trackUnits[tr.name].forEach((u, ui) => unitList.push({ ti, ui, start: u.start, end: u.end, cap: u.capacity })));
+    unitList.sort((x, y) => x.start - y.start || x.ti - y.ti);
+    const seatList = [];
+    unitList.forEach(u => { for (let k = 0; k < u.cap; k++) seatList.push(u); });
 
-    if (tracks.length > 1) {
-      const teamAppointments = {};
-      teams.forEach(t => teamAppointments[t] = []);
-      tracks.forEach(tr => {
-        perTrackGroups[tr.name].forEach(g => {
-          g.teams.forEach(t => teamAppointments[t].push({ start: g.start, end: g.end, prof: tr.name }));
-        });
-      });
-      let ok = true;
-      outer:
-      for (const t of teams) {
-        const appts = teamAppointments[t].slice().sort((a, b) => a.start - b.start);
-        for (let i = 1; i < appts.length; i++) {
-          const gap = appts[i].start - appts[i - 1].end;
-          if (gap < minGapMinutes) { ok = false; break outer; }
-        }
-      }
-      if (!ok) continue;
-    }
+    for (const strict of (modes || [true, false])) {
+      let found = null, foundPenalty = Infinity, successes = 0;
+      for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        const seqs = tracks.map(() => trackSequence(attempt));
+        const groups = tracks.map(tr => trackUnits[tr.name].map(u => ({ start: u.start, end: u.end, teams: [] })));
+        const trackAssigned = tracks.map(() => new Set());
+        const appts = {};
+        teams.forEach(t => appts[t] = []);
+        let nodes = 0;
+        const NODE_CAP = 3000;
 
-    const penalty = pairingPenalty(perTrackGroups);
-    if (penalty < bestPenalty) {
-      bestPenalty = penalty;
-      best = perTrackGroups;
+        const feasible = (t, s, e) => {
+          for (const a of appts[t]) {
+            if (!(s >= a.e + minGap || a.s >= e + minGap)) return false;
+          }
+          return true;
+        };
+        const dfs = (k) => {
+          if (k === seatList.length) return true;
+          if (++nodes > NODE_CAP) return false;
+          const seat = seatList[k];
+          const ti = seat.ti;
+          const remaining = seqs[ti].filter(t => !trackAssigned[ti].has(t));
+          let pool = remaining;
+          if (strict) {
+            const e = remaining.filter(t => pd[t] === 'early');
+            const n = remaining.filter(t => pd[t] !== 'early' && pd[t] !== 'late');
+            pool = e.length ? e : (n.length ? n : remaining);
+          }
+          const unitTeams = groups[ti][seat.ui].teams;
+          let cands = pool.filter(t => feasible(t, seat.start, seat.end));
+          if (criterion === 'random' && unitTeams.length) {
+            const pen = t => unitTeams.reduce((s, o) => s + (pairHistory[pairKey(t, o)] || 0), 0);
+            cands = cands.map((t, i) => ({ t, i, p: pen(t) })).sort((x, y) => x.p - y.p || x.i - y.i).map(x => x.t);
+          }
+          for (const t of cands) {
+            unitTeams.push(t); trackAssigned[ti].add(t); appts[t].push({ s: seat.start, e: seat.end });
+            if (dfs(k + 1)) return true;
+            unitTeams.pop(); trackAssigned[ti].delete(t); appts[t].pop();
+            if (nodes > NODE_CAP) return false;
+          }
+          return false;
+        };
+
+        if (!dfs(0)) continue;
+        successes++;
+        const perTrackGroups = {};
+        tracks.forEach((tr, ti) => { perTrackGroups[tr.name] = groups[ti].map(g => ({ start: g.start, end: g.end, teams: g.teams.slice() })); });
+        const penalty = pairingPenalty(perTrackGroups);
+        if (penalty < foundPenalty) { foundPenalty = penalty; found = perTrackGroups; }
+        if (foundPenalty === 0 && attempt >= 30) break;
+      }
+      if (found) return { best: found, bestPenalty: foundPenalty, priorityRelaxed: !strict };
     }
-    if (bestPenalty === 0 && attempt >= 30) break;
+    return null;
   }
 
-  if (!best) {
-    throw new Error('Could not find a conflict-free schedule after many attempts. Try loosening the minimum gap, spacing out professor start times, or shortening review lengths.');
+  const defaultGapStart = Math.max(...tracks.map(t => t.duration));
+  const userSetGap = !!(config.minGap && config.minGap > 0);
+  let solved = null;
+  let usedGap = minGapMinutes;
+  if (tracks.length <= 1) {
+    solved = solve(0, 200);
+    usedGap = 0;
+  } else if (userSetGap) {
+    solved = solve(minGapMinutes, 150, [true]) || solve(minGapMinutes, 150, [false]);
+    if (!solved) {
+      let feasibleGap = null;
+      for (let g = minGapMinutes - 5; g >= 0; g -= 5) {
+        if (solve(g, 60)) { feasibleGap = g; break; }
+      }
+      throw new Error(`Could not build a schedule with a minimum gap of ${minGapMinutes} min between a team's appointments.` +
+        (feasibleGap !== null ? ` With these professors' times and durations, about ${feasibleGap} min is the most that fits — lower the minimum gap, or start the professors at different times / extend the day.` : ' Even with no gap it does not fit: start the professors at different times or shorten reviews.'));
+    }
+  } else {
+    for (const modes of [[true], [false]]) {
+      for (let g = defaultGapStart; g >= 0 && !solved; g -= 5) {
+        solved = solve(g, g === defaultGapStart ? 150 : 100, modes);
+        if (solved) usedGap = g;
+      }
+      if (solved) break;
+    }
+    if (!solved) {
+      throw new Error('Could not find a valid schedule even with no gap between appointments. Try starting the professors at different times, extending the day, or shortening reviews.');
+    }
   }
+  const best = solved.best;
+  const bestPenalty = solved.bestPenalty;
 
   const allUnits = [];
   tracks.forEach(tr => {
@@ -845,7 +898,7 @@ function buildSchedule(config) {
     return { start: minToTime(start), end: minToTime(end), cells };
   });
 
-  return { schedule, meta: { minGapMinutes, repeatPairings: bestPenalty } };
+  return { schedule, meta: { minGapMinutes: usedGap, requestedGap: minGapMinutes, gapReduced: tracks.length > 1 && !userSetGap && usedGap < defaultGapStart, userSetGap, repeatPairings: bestPenalty, priorityRelaxed: solved.priorityRelaxed } };
 }
 
 function validateSchedule(config, schedule) {
@@ -883,7 +936,7 @@ function validateSchedule(config, schedule) {
 
   const userGap = config.minGap;
   const defaultGap = Math.max(...tracks.map(t => t.duration));
-  const minGapMinutes = (userGap && userGap > 0) ? userGap : defaultGap;
+  const minGapMinutes = (config.minGapUsed !== undefined) ? config.minGapUsed : ((userGap && userGap > 0) ? userGap : defaultGap);
 
   Object.entries(teamAppointments).forEach(([t, appts]) => {
     const sorted = appts.slice().sort((a, b) => a.start - b.start);
@@ -943,7 +996,7 @@ function buildComplianceReport(config, schedule) {
 
   const userGap = config.minGap;
   const defaultGap = Math.max(...tracks.map(t => t.duration));
-  const minGapMinutes = (userGap && userGap > 0) ? userGap : defaultGap;
+  const minGapMinutes = (config.minGapUsed !== undefined) ? config.minGapUsed : ((userGap && userGap > 0) ? userGap : defaultGap);
   const gapIssues = [];
   Object.entries(teamAppointments).forEach(([t, appts]) => {
     const sorted = appts.slice().sort((a, b) => a.start - b.start);
@@ -1048,11 +1101,18 @@ function generate() {
     messages.innerHTML = `<div class="warn">${e.message}</div>`;
     return;
   }
+  config.minGapUsed = result.meta.minGapMinutes;
   lastSchedule = result.schedule;
   lastConfig = config;
 
   const checks = buildComplianceReport(config, result.schedule);
   messages.innerHTML = renderComplianceReport(checks, result.meta.repeatPairings, Object.keys(pairHistory).length > 0);
+  if (result.meta.gapReduced) {
+    messages.innerHTML += `<div class="warn">Con l'intervallo automatico (${result.meta.requestedGap} min) non c'era spazio nella giornata: ho ridotto l'intervallo minimo tra gli appuntamenti di ogni squadra a <strong>${result.meta.minGapMinutes} min</strong>, il massimo che permette di far vedere a ogni squadra tutti i professori. Se vuoi più margine, fai partire i professori a orari diversi o allunga la giornata.</div>`;
+  }
+  if (result.meta.priorityRelaxed) {
+    messages.innerHTML += `<div class="warn">Le priorità early/late non erano compatibili con gli orari dei professori: sono state rilassate per trovare uno schedule valido.</div>`;
+  }
 
   const wrap = document.getElementById('resultWrap');
   const profNames = config.tracks.map(t => t.name);
