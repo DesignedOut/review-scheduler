@@ -489,21 +489,107 @@ function parseHistoryLines(lines, fileName) {
   return merged.filter(b => b.rows.length || b.skipped.length || b.unreadable.length);
 }
 
+/* ---- PDFs produced by this tool ("Timeline by team" / "Timeline by professor") ---- */
+function parseToolPdfPage(items, fileName) {
+  const its = items.filter(i => i.str && i.str.trim()).map(i => ({ s: i.str.trim(), x: i.x, y: i.y }));
+  const kind = its.some(i => /^Timeline by professor$/i.test(i.s)) ? 'prof' : 'team';
+  const dm = its.find(i => /^Date:\s*\S+/i.test(i.s));
+  if (!dm) return [];
+  const date = pdfNormDate(dm.s.replace(/^Date:\s*/i, ''));
+  const wk = its.find(i => Math.abs(i.y - dm.y) < 3 && /^(MONDAY|TUESDAY|WEDNESDAY|THURSDAY|FRIDAY|SATURDAY|SUNDAY)$/i.test(i.s));
+  const weekday = wk ? wk.s.toUpperCase() : '';
+  const rm = its.find(i => /Room:\s*(.+)$/.test(i.s));
+  const room = rm ? rm.s.match(/Room:\s*(.+)$/)[1].trim() : '';
+  const timeRe = /^(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})$/;
+  const times = its.filter(i => timeRe.test(i.s));
+  // column headers
+  let heads;
+  if (kind === 'team') heads = its.filter(i => /^TEAM\s*\d+$/i.test(i.s) && i.y > 480);
+  else {
+    const timeHdr = its.find(i => i.s === 'Time');
+    const cand = its.filter(i => timeHdr && Math.abs(i.y - timeHdr.y - 5) < 14 && i.x > timeHdr.x + 20 && !/^Time$/.test(i.s));
+    const labelY = Math.max(...cand.map(i => i.y));
+    heads = cand.filter(i => Math.abs(i.y - labelY) < 3);
+  }
+  heads.sort((a, b) => a.x - b.x);
+  if (!heads.length) return [];
+  const colW = heads.length > 1 ? (heads[heads.length - 1].x - heads[0].x) / (heads.length - 1) : 100;
+  const colOf = x => { let best = 0, bd = 1e9; heads.forEach((h, i) => { const d = Math.abs(h.x - (x - 4 + colW / 2 - h.s.length * 2)); if (d < bd) { bd = d; best = i; } }); return best; };
+  // heads x is the start of the (centred) header text, so compare block start with column left edge instead
+  const left0 = heads[0].x - (colW / 2 - (heads[0].s.length * 2.2));
+  const colIdx = x => Math.max(0, Math.min(heads.length - 1, Math.floor((x - left0 + 2) / colW)));
+  const groups = {};
+  const unreadable = [];
+  const nameOf = i => { const h = heads[colIdx(i.x)]; return kind === 'team' ? parseInt(h.s.replace(/\D/g, ''), 10) : h.s; };
+  times.forEach(t => {
+    const m = t.s.match(timeRe);
+    const col = colIdx(t.x);
+    if (kind === 'team') {
+      const above = its.filter(i => Math.abs(i.x - t.x) <= 3 && i.y > t.y && i.y - t.y < 22 && !timeRe.test(i.s) && !/^with\b/i.test(i.s) && !/\bmin$/.test(i.s));
+      above.sort((a, b) => a.y - b.y);
+      const prof = above.length ? above[0].s : null;
+      if (!prof) { unreadable.push(`${t.s} (team ${nameOf(t)}): no professor name above the time`); return; }
+      const key = prof + '|' + m[1] + '|' + m[2];
+      (groups[key] = groups[key] || { prof, start: m[1], end: m[2], teams: new Set() }).teams.add(nameOf(t));
+    } else {
+      const prof = heads[col].s;
+      const colItems = its.filter(i => Math.abs(i.x - t.x) <= 3 && i.y > t.y && i.y - t.y < 60).sort((p, q) => p.y - q.y);
+      const above = []; let prevY = t.y;
+      for (const it of colItems) {
+        if (it.y - prevY > 11) break;                       // gap: belongs to another block
+        if (/^TEAM\s*\d+/i.test(it.s) || /^ALL GROUPS$/i.test(it.s)) { above.push(it); prevY = it.y; } else break;
+      }
+      const teams = above.flatMap(a => [...a.s.matchAll(/TEAM\s*(\d+)/gi)].map(x => parseInt(x[1], 10)));
+      const key = prof + '|' + m[1] + '|' + m[2];
+      const g = (groups[key] = groups[key] || { prof, start: m[1], end: m[2], teams: new Set(), all: false });
+      if (above.some(a => /^ALL GROUPS$/i.test(a.s))) g.all = true;
+      teams.forEach(x => g.teams.add(x));
+      if (!teams.length && !g.all) unreadable.push(`${t.s} (${prof}): no team names above the time`);
+    }
+  });
+  const nTeams = kind === 'team' ? heads.length : null;
+  const byProf = {};
+  Object.values(groups).forEach(g => {
+    const b = (byProf[g.prof] = byProf[g.prof] || { file: fileName, date, weekday, prof: g.prof, room, rows: [], skipped: [], unreadable: [] });
+    const arr = [...g.teams].sort((a, b) => a - b);
+    if (g.all || (kind === 'team' && arr.length >= nTeams)) b.skipped.push({ start: g.start, end: g.end, text: 'ALL GROUPS' });
+    else b.rows.push({ start: g.start, end: g.end, teams: arr });
+  });
+  const out = Object.values(byProf);
+  out.forEach(b => b.rows.sort((a, c) => a.start.localeCompare(c.start)));
+  if (unreadable.length) { if (!out.length) out.push({ file: fileName, date, weekday, prof: '?', room, rows: [], skipped: [], unreadable }); else out[0].unreadable.push(...unreadable); }
+  return out;
+}
+function parseHistoryPages(pages, fileName) {
+  const isTool = pages.some(p => p.some(i => /^Timeline by (team|professor)$/i.test(String(i.str).trim())));
+  if (isTool) {
+    const merged = [];
+    pages.forEach(p => parseToolPdfPage(p, fileName).forEach(b => {
+      const ex = merged.find(x => x.date === b.date && x.prof === b.prof);
+      if (ex) { ex.rows.push(...b.rows); ex.skipped.push(...b.skipped); ex.unreadable.push(...b.unreadable); } else merged.push(b);
+    }));
+    return merged;
+  }
+  let lines = [];
+  pages.forEach(p => { lines = lines.concat(pdfItemsToLines(p)); });
+  return parseHistoryLines(lines, fileName);
+}
+
 
 /* ---- PDF import with a confirmation step ---- */
 let pendingPdf = null;
 
-async function extractPdfLines(file) {
+async function extractPdfPages(file) {
   if (typeof pdfjsLib === 'undefined') throw new Error('PDF reader not loaded (internet is needed the first time). Reload the page and try again.');
   pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
   const doc = await pdfjsLib.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
-  let lines = [];
+  const pages = [];
   for (let p = 1; p <= doc.numPages; p++) {
     const page = await doc.getPage(p);
     const tc = await page.getTextContent();
-    lines = lines.concat(pdfItemsToLines(tc.items.map(i => ({ str: i.str, x: i.transform[4], y: i.transform[5] }))));
+    pages.push(tc.items.map(i => ({ str: i.str, x: i.transform[4], y: i.transform[5] })));
   }
-  return lines;
+  return pages;
 }
 
 async function importSchedulePdf(fileList) {
@@ -513,8 +599,8 @@ async function importSchedulePdf(fileList) {
   const blocks = [], errors = [];
   for (const file of Array.from(fileList)) {
     try {
-      const lines = await extractPdfLines(file);
-      const bl = parseHistoryLines(lines, file.name);
+      const pages = await extractPdfPages(file);
+      const bl = parseHistoryPages(pages, file.name);
       if (!bl.length) errors.push(`${file.name}: no schedule found (no "Start time / End time" table).`);
       blocks.push(...bl);
     } catch (e) { errors.push(`${file.name}: ${e.message}`); }
