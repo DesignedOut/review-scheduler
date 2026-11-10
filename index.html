@@ -236,6 +236,13 @@
 
   <div class="row">
     <div class="field">
+      <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="noRepeatDay" checked style="width:auto" onchange="saveDay()"> Don't pair the same two teams twice in this day</label>
+      <div class="hint">Applies when 2+ professors see teams in pairs (e.g. morning and afternoon): a team will meet a different partner each time. If it can't be satisfied together with the other constraints, the tool allows repeats and tells you.</div>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="field">
       <label>Room / online link (this day)</label>
       <input type="text" id="roomInput" placeholder="e.g. B2.2.11 or Teams: …" oninput="saveDay()">
     </div>
@@ -1104,6 +1111,7 @@ function buildSchedule(config) {
   // (overlap or less than the minimum gap) we skip to the next feasible one, and
   // backtrack if we get stuck. This finds valid schedules for multi-professor days
   // that blind random sampling practically never hits.
+  let curNoRep = !!config.noRepeatDay && tracks.filter(t => !t.plenary).length > 1;
   function solve(minGap, maxAttempts, modes) {
     const unitList = [];
     tracks.forEach((tr, ti) => trackUnits[tr.name].forEach((u, ui) => unitList.push({ ti, ui, start: u.start, end: u.end, cap: u.capacity })));
@@ -1117,6 +1125,7 @@ function buildSchedule(config) {
         const seqs = tracks.map(() => trackSequence(attempt));
         const groups = tracks.map(tr => trackUnits[tr.name].map(u => ({ start: u.start, end: u.end, teams: [] })));
         const trackAssigned = tracks.map(() => new Set());
+        const dayPairs = new Set();
         const appts = {};
         teams.forEach(t => appts[t] = []);
         let nodes = 0;
@@ -1141,15 +1150,19 @@ function buildSchedule(config) {
             pool = e.length ? e : (n.length ? n : remaining);
           }
           const unitTeams = groups[ti][seat.ui].teams;
-          let cands = pool.filter(t => feasible(t, seat.start, seat.end));
+          const chkPairs = curNoRep && !tracks[ti].plenary;
+          let cands = pool.filter(t => feasible(t, seat.start, seat.end) && (!chkPairs || unitTeams.every(o => !dayPairs.has(pairKey(t, o)))));
           if (criterion === 'random' && unitTeams.length) {
             const pen = t => unitTeams.reduce((s, o) => s + (pairHistory[pairKey(t, o)] || 0), 0);
             cands = cands.map((t, i) => ({ t, i, p: pen(t) })).sort((x, y) => x.p - y.p || x.i - y.i).map(x => x.t);
           }
           for (const t of cands) {
+            const addedPairs = [];
+            if (chkPairs) unitTeams.forEach(o => { const pk = pairKey(t, o); dayPairs.add(pk); addedPairs.push(pk); });
             unitTeams.push(t); trackAssigned[ti].add(t); appts[t].push({ s: seat.start, e: seat.end });
             if (dfs(k + 1)) return true;
             unitTeams.pop(); trackAssigned[ti].delete(t); appts[t].pop();
+            addedPairs.forEach(pk => dayPairs.delete(pk));
             if (nodes > NODE_CAP) return false;
           }
           return false;
@@ -1170,6 +1183,7 @@ function buildSchedule(config) {
 
   const defaultGapStart = autoGapOf(tracks);
   const userSetGap = !!(config.minGap && config.minGap > 0);
+  function runSolve() {
   let solved = null;
   let usedGap = minGapMinutes;
   if (tracks.length <= 1) {
@@ -1197,6 +1211,16 @@ function buildSchedule(config) {
       throw new Error('Could not find a valid schedule even with no gap between appointments. Try starting the professors at different times, extending the day, or shortening reviews.');
     }
   }
+  return { solved, usedGap };
+  }
+  let dayRepeatRelaxed = false, resSolve;
+  try { resSolve = runSolve(); }
+  catch (e) {
+    if (!curNoRep) throw e;
+    curNoRep = false; dayRepeatRelaxed = true;   // could not avoid same-day repeats: retry allowing them
+    resSolve = runSolve();
+  }
+  const solved = resSolve.solved, usedGap = resSolve.usedGap;
   const best = solved.best;
   const bestPenalty = solved.bestPenalty;
 
@@ -1217,7 +1241,7 @@ function buildSchedule(config) {
     return { start: minToTime(start), end: minToTime(end), cells };
   });
 
-  return { schedule, meta: { minGapMinutes: usedGap, requestedGap: minGapMinutes, gapReduced: tracks.length > 1 && !userSetGap && usedGap < defaultGapStart, userSetGap, repeatPairings: bestPenalty, priorityRelaxed: solved.priorityRelaxed } };
+  return { schedule, meta: { minGapMinutes: usedGap, requestedGap: minGapMinutes, gapReduced: tracks.length > 1 && !userSetGap && usedGap < defaultGapStart, userSetGap, repeatPairings: bestPenalty, priorityRelaxed: solved.priorityRelaxed, dayRepeatRelaxed } };
 }
 
 function validateSchedule(config, schedule) {
@@ -1332,6 +1356,23 @@ function buildComplianceReport(config, schedule) {
     detail: gapIssues.length ? gapIssues.join('; ') : null
   });
 
+  if (config.noRepeatDay && tracks.filter(t => !t.plenary).length > 1) {
+    const seenP = {}, repeats = [];
+    schedule.forEach(row => tracks.forEach(tr => {
+      const item = row.cells[tr.name];
+      if (!item || tr.plenary || item.length < 2) return;
+      for (let x = 0; x < item.length; x++) for (let y = x + 1; y < item.length; y++) {
+        const k = [item[x], item[y]].sort((p, q) => p - q).join('+');
+        if (seenP[k]) repeats.push(`${k} (${seenP[k]} and ${tr.name})`); else seenP[k] = tr.name;
+      }
+    }));
+    checks.push({
+      ok: repeats.length === 0,
+      text: 'No two teams are paired together more than once in the same day',
+      detail: repeats.length ? 'Repeated: ' + repeats.join(', ') : null
+    });
+  }
+
   const pd = priorityData || {};
   const earlyTeams = teams.filter(t => pd[t] === 'early');
   const lateTeams = teams.filter(t => pd[t] === 'late');
@@ -1398,6 +1439,7 @@ function collectConfig(d) {
   return {
     date: d.date || '(no date set)',
     room: d.room || '',
+    noRepeatDay: d.noRepeatDay !== false,
     minGap: parseInt(d.minGap) || 0,
     teams,
     brk: (d.brkOn && d.brkStart && d.brkEnd) ? { start: d.brkStart, end: d.brkEnd } : null,
@@ -1520,6 +1562,7 @@ function saveDay() {
   days[curDay] = {
     date: document.getElementById('dateInput').value,
     room: document.getElementById('roomInput').value,
+    noRepeatDay: document.getElementById('noRepeatDay').checked,
     minGap: parseInt(document.getElementById('minGap').value) || 0,
     brkOn: document.getElementById('breakOn').checked,
     brkStart: document.getElementById('breakStart').value,
@@ -1531,6 +1574,7 @@ function loadDay() {
   const d = days[curDay];
   document.getElementById('dateInput').value = d.date || '';
   document.getElementById('roomInput').value = d.room || '';
+  document.getElementById('noRepeatDay').checked = d.noRepeatDay !== false;
   document.getElementById('minGap').value = d.minGap || 0;
   document.getElementById('breakOn').checked = !!d.brkOn;
   document.getElementById('breakStart').value = d.brkStart || '13:15';
@@ -1549,7 +1593,7 @@ function switchDay(i) { saveDay(); curDay = i; loadDay(); }
 function addDay() {
   saveDay();
   const src = days[curDay];
-  days.push({ date: '', room: '', minGap: src.minGap, brkOn: src.brkOn, brkStart: src.brkStart, brkEnd: src.brkEnd, tracks: JSON.parse(JSON.stringify(src.tracks)) });
+  days.push({ date: '', room: '', noRepeatDay: src.noRepeatDay, minGap: src.minGap, brkOn: src.brkOn, brkStart: src.brkStart, brkEnd: src.brkEnd, tracks: JSON.parse(JSON.stringify(src.tracks)) });
   curDay = days.length - 1; loadDay();
 }
 function removeDay() {
@@ -1600,6 +1644,7 @@ function generate() {
     const checks = buildComplianceReport(config, schedule);
     let msgs = renderComplianceReport(checks, meta.repeatPairings, Object.keys(pairHistory).length > 0 || i > 0);
     if (meta.gapReduced) msgs += `<div class="warn">With the automatic gap (${meta.requestedGap} min) the day did not fit: I reduced the minimum gap between each team's appointments to <strong>${meta.minGapMinutes} min</strong>, the most that lets every team see all professors. For more margin, start the professors at different times or extend the day.</div>`;
+    if (meta.dayRepeatRelaxed) msgs += `<div class="warn">Could not avoid pairing the same two teams more than once in this day with the current constraints, so some repeats were allowed. Try different professor start times or slot plans.</div>`;
     if (meta.priorityRelaxed) msgs += `<div class="warn">The early/late priorities were not compatible with the professors' times: they were relaxed to find a valid schedule.</div>`;
     const head = document.createElement('div');
     head.innerHTML = (multi ? `<h2 style="margin-top:24px">Day ${i + 1} — ${config.date}</h2>` : '') + msgs;
@@ -2070,8 +2115,8 @@ function downloadCSV() {
 }
 
 days = [
-  { date: '', room: '', minGap: 0, brkOn: true, brkStart: '13:15', brkEnd: '14:15', tracks: tracks },
-  { date: '', room: '', minGap: 0, brkOn: true, brkStart: '13:15', brkEnd: '14:15', tracks: JSON.parse(JSON.stringify(tracks)) }
+  { date: '', room: '', noRepeatDay: true, minGap: 0, brkOn: true, brkStart: '13:15', brkEnd: '14:15', tracks: tracks },
+  { date: '', room: '', noRepeatDay: true, minGap: 0, brkOn: true, brkStart: '13:15', brkEnd: '14:15', tracks: JSON.parse(JSON.stringify(tracks)) }
 ];
 loadDay();
 renderTeamTable();
